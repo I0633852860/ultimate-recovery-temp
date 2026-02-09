@@ -54,3 +54,7 @@ __pycache__/
 *.pyc
 *.bak
 accelerator/target/
+
+# Rust build artifacts
+rust-recovery/target/
+rust-recovery/Cargo.lock
