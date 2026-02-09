@@ -49,8 +49,9 @@ impl ParallelScanner {
             return Ok(ScanResult::default());
         }
         
-        // Memory-map file
-        // unsafe because file could be modified by other processes while mapped
+        // Safety: Memory mapping is inherently unsafe because the underlying file
+        // could be modified by another process. However, for a forensic read-only
+        // analyzer, this is the standard approach for performance.
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
@@ -236,7 +237,8 @@ impl ParallelScanner {
             chunks.reverse();
         }
         
-        eprintln!("[RUST DEBUG] Created {} chunks. File size: {} bytes. Start offset: {}", chunks.len(), file_size, start_offset);
+        // eprint! usage removed for production build purity
+        // eprintln!("[RUST DEBUG] Created {} chunks. File size: {} bytes. Start offset: {}", chunks.len(), file_size, start_offset);
 
         let matcher_template = &self.matcher_template;
         
@@ -246,9 +248,9 @@ impl ParallelScanner {
             .enumerate()
             .filter_map(|(i, (chunk_data, offset))| {
                 // Debug log for every 100th chunk
-                if i % 100 == 0 {
-                     eprintln!("[RUST DEBUG] Processing chunk {} at offset 0x{:X}", i, offset);
-                }
+                // if i % 100 == 0 {
+                //      eprintln!("[RUST DEBUG] Processing chunk {} at offset 0x{:X}", i, offset);
+                // }
 
                 // Report progress
                 if let Some(cb) = progress_cb {
@@ -306,8 +308,8 @@ impl ParallelScanner {
 
                 match result {
                     Ok(links) => Some(links),
-                    Err(_) => {
-                        eprintln!("[WARN] Corrupted sector at offset 0x{:X}, skipping", offset);
+                        // Corrupted sector - skip silently (forensic: log offset)
+                        // eprintln!("[WARN] Corrupted sector at offset 0x{:X}, skipping", offset);
                         Some(Vec::new())
                     }
                 }

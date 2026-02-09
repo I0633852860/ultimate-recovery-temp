@@ -26,6 +26,12 @@ htmlcov/
 .nox/
 .hypothesis/
 .idea
+# Logs
+recovery.log
+*.log
+
+# OS
+.DS_Store
 .vscode
 *.img
 *.iso
@@ -38,3 +44,8 @@ accelerator/Cargo.lock
 *.tmp
 audit/
 audit.zip
+
+__pycache__/
+*.pyc
+*.bak
+accelerator/target/

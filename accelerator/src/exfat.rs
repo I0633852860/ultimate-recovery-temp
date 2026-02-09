@@ -452,6 +452,7 @@ impl RustExFATScanner {
     pub fn scan_file(&self, py: Python, file_path: String, offset: u64, limit: u64) -> PyResult<(Vec<ExFATEntry>, Vec<EnrichedLink>)> {
         let file = File::open(&file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Cannot open {}: {}", file_path, e)))?;
+        // Safety: Mmap is unsafe as file can be modified externally. Standard forensic risk accepted for speed.
         let mmap = unsafe { Mmap::map(&file)? };
         let data = mmap.as_ref();
         let file_size = data.len();
@@ -529,7 +530,14 @@ impl RustExFATScanner {
         Ok((sorted_entries, sorted_links))
     }
 
-    pub fn extract_file(&self, py: Python, file_path: &str, first_cluster: u32, size: u64, no_fat_chain: bool) -> PyResult<PyObject> {
+    pub fn extract_file(
+        &self, 
+        py: Python, 
+        file_path: &str, 
+        first_cluster: u32, 
+        size: u64, 
+        no_fat_chain: bool
+    ) -> PyResult<PyObject> {
         let file = File::open(file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Cannot open {}: {}", file_path, e)))?;
         let mmap = unsafe { Mmap::map(&file)? };
@@ -546,7 +554,12 @@ impl RustExFATScanner {
         Ok(PyBytes::new(py, &content).into())
     }
 
-    pub fn extract_original_file(&self, py: Python, image_path: &str, entry_offset: u64) -> PyResult<(String, PyObject)> {
+    pub fn extract_original_file(
+        &self, 
+        py: Python, 
+        image_path: &str, 
+        entry_offset: u64
+    ) -> PyResult<(String, PyObject)> {
         let file = File::open(image_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Cannot open {}: {}", image_path, e)))?;
         let mmap = unsafe { Mmap::map(&file)? };

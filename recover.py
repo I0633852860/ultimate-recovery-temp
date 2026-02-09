@@ -929,10 +929,14 @@ def main():
         links_file_txt = output_dir / "03_EXTRACTED_LINKS" / "all_links.txt"
         links_file_json = output_dir / "03_EXTRACTED_LINKS" / "all_links.json"
         
+        if links_file_txt.exists():
+            logging.warning(f"Overwriting existing links file: {links_file_txt}")
         with open(links_file_txt, "w") as f:
             for link in sorted(list(all_unique_links)):
                 f.write(f"{link}\n")
                 
+        if links_file_json.exists():
+            logging.warning(f"Overwriting existing links file: {links_file_json}")
         with open(links_file_json, "w") as f:
             json.dump({"total_links": len(all_unique_links), "links": sorted(list(all_unique_links))}, f, indent=2)
             

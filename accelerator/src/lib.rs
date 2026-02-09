@@ -56,7 +56,13 @@ struct RustParallelScanner {
 impl RustParallelScanner {
     #[new]
     #[pyo3(signature = (num_threads=0, chunk_size_mb=256, overlap_kb=64, deduplicate=true, min_confidence=0.1))]
-    fn new(num_threads: usize, chunk_size_mb: usize, overlap_kb: usize, deduplicate: bool, min_confidence: f32) -> Self {
+    fn new(
+        num_threads: usize, 
+        chunk_size_mb: usize, 
+        overlap_kb: usize, 
+        deduplicate: bool, 
+        min_confidence: f32
+    ) -> Self {
         let config = ScanConfig {
             num_threads,
             chunk_size: chunk_size_mb * 1024 * 1024,

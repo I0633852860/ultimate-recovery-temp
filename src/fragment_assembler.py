@@ -100,7 +100,7 @@ class FragmentAssembler:
                     # quick decode, take first 1KB
                     text = frag.data[:1024].decode('utf-8', errors='ignore')
                     semantic_cache[frag.offset] = classifier.classify_text(text)
-                except:
+                except Exception:
                     semantic_cache[frag.offset] = ("Unknown", 0.0)
             return semantic_cache[frag.offset]
 
@@ -349,7 +349,7 @@ class FragmentAssembler:
             if "instagram.com" in link: return "instagram"
             if "facebook.com" in link: return "facebook"
             return "other"
-        except:
+        except Exception:
             return "other"
 
     def process_clusters(self, fragments: List[Dict], classifier=None) -> List[AssembledFile]:

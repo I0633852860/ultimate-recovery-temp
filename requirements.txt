@@ -2,7 +2,7 @@
 # Optimized for Intel GPU / Low-end hardware (OptiPlex 3070 Micro)
 
 # Core UI library
-rich>=13.0.0
+rich==13.7.1
 
 # NO heavy ML libraries (optimized for Intel GPU)
 # ❌ tensorflow - too heavy

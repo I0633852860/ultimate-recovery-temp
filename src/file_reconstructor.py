@@ -125,7 +125,7 @@ class FileReconstructor:
                 return FileType.CSV
                 
             return FileType.TXT
-        except:
+        except Exception:
             return FileType.UNKNOWN
 
     def _suggest_filename(self, text: str, file_type: FileType) -> str:

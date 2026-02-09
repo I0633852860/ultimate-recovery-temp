@@ -115,19 +115,21 @@ impl RustFragmentLinker {
             }
         }
         
-        let result: Vec<PyObject> = groups.iter().map(|group| {
-            let py_group: Vec<PyObject> = group.iter().map(|&idx| {
+        let result: PyResult<Vec<PyObject>> = groups.iter().map(|group| {
+            let py_group: PyResult<Vec<PyObject>> = group.iter().map(|&idx| {
                 let frag = &fragments[idx];
                 let dict = pyo3::types::PyDict::new(py);
-                dict.set_item("offset", frag.offset).unwrap();
-                dict.set_item("size", frag.size).unwrap();
-                dict.set_item("file_type", &frag.file_type).unwrap();
-                dict.to_object(py)
+                dict.set_item("offset", frag.offset)?;
+                dict.set_item("size", frag.size)?;
+                dict.set_item("file_type", &frag.file_type)?;
+                Ok(dict.to_object(py))
             }).collect();
-            pyo3::types::PyList::new(py, py_group).to_object(py)
+            
+            let py_group = py_group?;
+            Ok(pyo3::types::PyList::new(py, py_group).to_object(py))
         }).collect();
         
-        Ok(result)
+        result
     }
 
     fn clear(&mut self) {

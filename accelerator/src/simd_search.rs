@@ -30,8 +30,10 @@ pub fn find_pattern_simd(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
+            // Safety: We checked for AVX2 support via runtime detection (is_x86_feature_detected).
             return unsafe { find_pattern_avx2(haystack, needle) };
         } else if is_x86_feature_detected!("sse4.2") {
+            // Safety: We checked for SSE4.2 support via runtime detection.
             return unsafe { find_pattern_sse42(haystack, needle) };
         }
     }

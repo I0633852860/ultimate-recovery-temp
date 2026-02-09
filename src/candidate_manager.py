@@ -185,8 +185,10 @@ def test_candidate_manager(tmp_path):
     content = b'{"test": "data"}'
     meta = {"file_type": "json", "confidence": 95.0}
     path = cm.save_recovered(content, meta, "test_file.json")
-    assert path.exists()
-    assert "[95%] test_file.json" in path.name
+    if not path.exists():
+        raise RuntimeError(f"Path {path} does not exist")
+    if "[95%] test_file.json" not in path.name:
+         raise RuntimeError(f"Incorrect filename: {path.name}")
     assert (tmp_path / "01_RECOVERED_FILES" / "JSON").exists()
 
 if __name__ == "__main__":
