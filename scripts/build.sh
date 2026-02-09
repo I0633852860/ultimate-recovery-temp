@@ -23,11 +23,15 @@ echo "Installing Python dependencies..."
 echo "Python dependencies installed"
 echo ""
 
+# Get the directory where the script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( dirname "$SCRIPT_DIR" )"
+
 # Build Rust accelerator
 echo "Building Rust accelerator..."
-cd accelerator
+cd "$PROJECT_ROOT/accelerator"
 cargo build --release
-cd ..
+cd "$PROJECT_ROOT"
 
 # Ensure lib/ directory exists
 mkdir -p lib

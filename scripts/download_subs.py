@@ -48,4 +48,8 @@ if __name__ == "__main__":
     # Create dir if not exists
     os.makedirs(args.output, exist_ok=True)
     
-    download_subs("all_links.json", args.output, limit=limit)
+    link_file = "all_links.json"
+    if not os.path.exists(link_file) and os.path.exists("../all_links.json"):
+        link_file = "../all_links.json"
+    
+    download_subs(link_file, args.output, limit=limit)

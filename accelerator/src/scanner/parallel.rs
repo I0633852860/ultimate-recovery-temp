@@ -308,6 +308,7 @@ impl ParallelScanner {
 
                 match result {
                     Ok(links) => Some(links),
+                    Err(_) => {
                         // Corrupted sector - skip silently (forensic: log offset)
                         // eprintln!("[WARN] Corrupted sector at offset 0x{:X}, skipping", offset);
                         Some(Vec::new())

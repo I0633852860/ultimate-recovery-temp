@@ -30,6 +30,11 @@ htmlcov/
 recovery.log
 *.log
 
+# Test & Training Data
+all_links.json
+test_output/
+semantic_training/
+
 # OS
 .DS_Store
 .vscode
