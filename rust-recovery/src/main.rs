@@ -4,6 +4,8 @@ mod error;
 mod simd_search;
 mod types;
 mod scanner;
+mod matcher;
+mod entropy;
 
 use clap::Parser;
 use cli::Args;
@@ -11,7 +13,6 @@ use disk::DiskImage;
 use error::Result;
 use types::{Offset, ScanConfig};
 use scanner::ParallelScanner;
-use simd_search;
 
 fn main() {
     if let Err(e) = run() {
@@ -81,7 +82,7 @@ fn run() -> Result<()> {
     println!("Testing SIMD search...");
     let test_pattern = b"test";
     let test_data = b"this is a test of the simd search functionality";
-    if let Some(pos) = simd_search::find_pattern_simd(test_data, test_pattern) {
+    if let Some(pos) = rust_recovery::find_pattern_simd(test_data, test_pattern) {
         println!("  Found pattern at position {} using SIMD", pos);
     }
     println!();
@@ -89,8 +90,8 @@ fn run() -> Result<()> {
     // Test parallel scanner with small chunks
     println!("Testing parallel scanner...");
     let scan_config = ScanConfig::new(1024 * 1024, 64 * 1024, 0);
-    let scanner = ParallelScanner::new(scan_config);
-    println!("  Scanner configured with chunk_size: {}", scanner.config.chunk_size);
+    let _scanner = ParallelScanner::new(scan_config);
+    println!("  Scanner configured successfully");
     println!("  Chunk alignment: 64 bytes (cache line)");
     println!();
 

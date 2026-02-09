@@ -193,6 +193,9 @@ pub struct HotFragment {
     pub has_valid_json: bool,
     pub target_score: f32,
     pub file_type_guess: String,
+    pub entropy: f32,
+    pub entropy_category: String,
+    pub fragment_score: FragmentScore,
 }
 
 impl HotFragment {
@@ -206,12 +209,85 @@ impl HotFragment {
             has_valid_json: false,
             target_score: 0.0,
             file_type_guess: "unknown".to_string(),
+            entropy: 0.0,
+            entropy_category: "unknown".to_string(),
+            fragment_score: FragmentScore::default(),
         }
     }
 
     pub fn is_target_size(&self) -> bool {
         let size_kb = self.size as f32 / 1024.0;
         size_kb >= 15.0 && size_kb <= 350.0
+    }
+
+    pub fn is_high_quality(&self) -> bool {
+        self.fragment_score.is_valid_structure() && 
+        self.fragment_score.overall_score > 50.0 &&
+        !self.fragment_score.is_compressed
+    }
+}
+
+/// Fragment validation results and scoring
+#[derive(Debug, Clone)]
+pub struct FragmentScore {
+    pub overall_score: f32,
+    pub is_valid_json: bool,
+    pub is_valid_html: bool,
+    pub is_valid_csv: bool,
+    pub is_valid_youtube_url: bool,
+    pub has_structured_text: bool,
+    pub is_compressed: bool,
+    pub reasons: Vec<String>,
+}
+
+impl Default for FragmentScore {
+    fn default() -> Self {
+        Self {
+            overall_score: 0.0,
+            is_valid_json: false,
+            is_valid_html: false,
+            is_valid_csv: false,
+            is_valid_youtube_url: false,
+            has_structured_text: false,
+            is_compressed: false,
+            reasons: Vec::new(),
+        }
+    }
+}
+
+impl FragmentScore {
+    /// Check if fragment has valid structure of any supported type
+    pub fn is_valid_structure(&self) -> bool {
+        self.is_valid_json || self.is_valid_html || self.is_valid_csv || self.has_structured_text
+    }
+
+    /// Check if fragment is worth processing based on quality metrics
+    pub fn is_processing_worthy(&self) -> bool {
+        self.overall_score > 30.0 && !self.is_compressed
+    }
+}
+
+/// Validation results for a data chunk
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    pub is_valid_json: bool,
+    pub is_valid_youtube_url: bool,
+    pub is_probably_json: bool,
+    pub is_probably_youtube: bool,
+    pub json_confidence: f32,
+    pub url_confidence: f32,
+}
+
+impl Default for ValidationResult {
+    fn default() -> Self {
+        Self {
+            is_valid_json: false,
+            is_valid_youtube_url: false,
+            is_probably_json: false,
+            is_probably_youtube: false,
+            json_confidence: 0.0,
+            url_confidence: 0.0,
+        }
     }
 }
 
