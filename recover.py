@@ -77,6 +77,8 @@ def main():
                         help="Maximum dynamic chunk size in KB")
     parser.add_argument("--full-exfat-recovery", action="store_true", default=True,
                         help="Enable FAT chain following for full file recovery")
+    parser.add_argument("--semantic-scan", action="store_true",
+                        help="Analyze candidates and group by semantic category (Trading/Psychology)")
 
     args = parser.parse_args()
 
@@ -527,7 +529,19 @@ def main():
     from fragment_assembler import FragmentAssembler
     assembler = FragmentAssembler(max_gap=1024 * 1024) # 1MB gap tolerance for assembling clusters
 
-    
+    # Use training data for Semantic SmartSeparation
+    classifier = None
+    try:
+        from semantic_classifier import SemanticClassifier
+        training_dir = Path("semantic_training")
+        if training_dir.exists():
+            classifier = SemanticClassifier(training_dir)
+            console.print("  [green]Semantic Classifier loaded for Smart Separation[/green]")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"Failed to load Semantic Classifier: {e}")
+
     # 1. Convert Clusters to "Fragment Candidates"
     # We read the actual cluster content to see if we can link them
     cluster_fragments = []
@@ -590,7 +604,7 @@ def main():
     # 3. Try to assemble these cluster fragments
     if cluster_fragments:
         # V11.2: Use multi-file detection to handle 2-3+ files
-        assembled_files = assembler.assemble_multiple_files(cluster_fragments)
+        assembled_files = assembler.assemble_multiple_files(cluster_fragments, classifier=classifier)
         
         if assembled_files:
             console.print(f"  Found {len(assembled_files)} assembled file(s)")
@@ -821,13 +835,48 @@ def main():
         console.print(f"[bold red]{msg}[/bold red]")
         sys.exit(1)
 
+    # ----------------------------------------------------------------
+    # Phase 4: Semantic Assembly (V11.5 addition)
+    # ----------------------------------------------------------------
+    if args.semantic_scan:
+        console.print("\nPhase 4: Semantic Assembly...", style="bold")
+        
+        try:
+            from semantic_classifier import SemanticClassifier
+            from semantic_assembler import SemanticAssembler
+            
+            # Use training data from semantic_training folder
+            training_dir = Path("semantic_training")
+            if not training_dir.exists():
+                console.print("  [yellow]No 'semantic_training' directory found. Using default keywords.[/yellow]")
+            
+            classifier = SemanticClassifier(training_dir)
+            
+            sem_assembler = SemanticAssembler(output_dir, classifier)
+            
+            # We scan the candidates folder (both validated and rejected/temp?)
+            # Usually we want to scan things that FAILED to be recovered properly, 
+            # OR raw candidates that were just carved. 
+            # CandidateManager puts raw data in 00_CANDIDATES/cand_.../raw.bin
+            
+            candidates_root = output_dir / "00_CANDIDATES"
+            if candidates_root.exists():
+                 sem_assembler.process_candidates(candidates_root)
+                 console.print("  [green]Semantic grouping complete. Check 07_SEMANTIC_GROUPS[/green]")
+            else:
+                 console.print("  [yellow]No 00_CANDIDATES directory found to scan.[/yellow]")
+                 
+        except Exception as e:
+            console.print(f"  [red]Semantic assembly failed: {e}[/red]")
+            logging.error(f"Semantic assembly failed: {e}", exc_info=True)
+
     cleaned = candidate_manager.cleanup_candidates(keep_rejected=False)
     console.print(f"  Cleaned {cleaned} temporary files")
 
     # ----------------------------------------------------------------
-    # Phase 4: Generate Report
+    # Phase 5: Generate Report
     # ----------------------------------------------------------------
-    console.print("\nPhase 4: Generating professional report...", style="bold")
+    console.print("\nPhase 5: Generating professional report...", style="bold")
 
     report_gen = ProfessionalReportGenerator(output_dir)
 
@@ -845,9 +894,9 @@ def main():
     console.print(f"Report: {report_path}")
 
     # ----------------------------------------------------------------
-    # Phase 5: Generate HTML Index
+    # Phase 6: Generate HTML Index
     # ----------------------------------------------------------------
-    console.print("\nPhase 5: Generating navigation index...", style="bold")
+    console.print("\nPhase 6: Generating navigation index...", style="bold")
 
     index_gen = IndexGenerator(output_dir)
 
@@ -869,10 +918,10 @@ def main():
     console.print(f"Index: {index_path}")
 
     # ----------------------------------------------------------------
-    # Phase 6: Export Global Links (v10 specialized)
+    # Phase 7: Export Global Links (v10 specialized)
     # ----------------------------------------------------------------
     if args.links_only or recovered_files:
-        console.print("\nPhase 6: Exporting all unique links...", style="bold")
+        console.print("\nPhase 7: Exporting all unique links...", style="bold")
         all_unique_links = set()
         for rf in recovered_files:
             all_unique_links.update(rf.get("links", []))
@@ -926,6 +975,7 @@ def main():
     console.print(f"    03_EXTRACTED_LINKS/           - Extracted links")
     console.print(f"    04_METADATA/                  - Metadata")
     console.print(f"    05_REPORTS/                   - Reports")
+    console.print(f"    07_SEMANTIC_GROUPS/           - Semantic groups (Trading, Psychology...)")
     console.print()
     console.print("  Quick Start:")
     console.print(f"    1. Open INDEX.md for navigation")

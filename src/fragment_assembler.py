@@ -77,10 +77,10 @@ class FragmentAssembler:
                 
         return score
 
-    def disentangle_cluster(self, fragments: List[Fragment]) -> List[List[Fragment]]:
+    def disentangle_cluster(self, fragments: List[Fragment], classifier=None) -> List[List[Fragment]]:
         """
         Stream Solver: Disentangles interleaved fragments into separate streams.
-        Uses a greedy approach based on offset continuity and content density.
+        Uses a greedy approach based on offset continuity, content density, AND semantic context.
         """
         if not fragments: return []
         if len(fragments) == 1: return [fragments]
@@ -89,12 +89,30 @@ class FragmentAssembler:
         pending = sorted(fragments, key=lambda x: x.offset)
         streams: List[List[Fragment]] = []
         
+        # Cache for semantic tags: fragment_id -> (category, confidence)
+        # Using offset as ID for simplicity
+        semantic_cache = {}
+        
+        def get_semantic_info(frag: Fragment):
+            if not classifier: return ("Unknown", 0.0)
+            if frag.offset not in semantic_cache:
+                try:
+                    # quick decode, take first 1KB
+                    text = frag.data[:1024].decode('utf-8', errors='ignore')
+                    semantic_cache[frag.offset] = classifier.classify_text(text)
+                except:
+                    semantic_cache[frag.offset] = ("Unknown", 0.0)
+            return semantic_cache[frag.offset]
+
         while pending:
             current_stream = []
             
             # Start new stream with the earliest fragment
             current_frag = pending.pop(0)
             current_stream.append(current_frag)
+            
+            # Determine stream semantics from the head (or majority of first N items)
+            stream_cat, stream_conf = get_semantic_info(current_frag)
             
             # Try to extend this stream
             # Look for the best next fragment in remaining pending items
@@ -141,10 +159,21 @@ class FragmentAssembler:
                         type_score = -50
                     else:
                         type_score = 0
+
+                    # 4. Semantic Continuity (V11.5)
+                    semantic_score = 0
+                    if classifier:
+                        cand_cat, cand_conf = get_semantic_info(cand)
+                        # Only boost if we have a confident stream category
+                        if stream_conf > 0.2 and cand_conf > 0.2:
+                            if stream_cat == cand_cat and stream_cat != "Unknown":
+                                semantic_score = 30 # Strong fit
+                            elif stream_cat != cand_cat and cand_cat != "Unknown":
+                                semantic_score = -30 # Mismatch
+                                
+                    final_score = gap_score + align_score + type_score + semantic_score
                     
-                    final_score = gap_score + align_score + type_score
-                    
-                    # print(f"DEBUG: Current={current_frag.offset}, Cand={cand.offset}, Gap={gap}, GapScore={gap_score}, Final={final_score}")
+                    # print(f"DEBUG: Current={current_frag.offset}, Cand={cand.offset}, Gap={gap}, GapScore={gap_score}, Sem={semantic_score}, Final={final_score}")
                     
                     if final_score > best_score and final_score > 0:
                         best_score = final_score
@@ -155,6 +184,10 @@ class FragmentAssembler:
                     next_frag = pending.pop(best_idx)
                     current_stream.append(next_frag)
                     current_frag = next_frag
+                    
+                    # Update stream semantics if current was weak?
+                    # For now keep "first winner takes all" semantics or update rolling?
+                    # Keep simple.
                 else:
                     # End of this stream
                     break
@@ -169,14 +202,14 @@ class FragmentAssembler:
 
 
 
-    def assemble_group(self, fragments: List[Fragment], ignore_gaps: bool = False) -> List[AssembledFile]:
+    def assemble_group(self, fragments: List[Fragment], ignore_gaps: bool = False, classifier=None) -> List[AssembledFile]:
         """Сборка группы фрагментов. Может вернуть несколько файлов, если обнаружены разрывы."""
         if not fragments: return []
         
         # 1. Split logic for SmartSeparation
         sequences = [fragments]
         if ignore_gaps:
-             sequences = self.disentangle_cluster(fragments)
+             sequences = self.disentangle_cluster(fragments, classifier=classifier)
         
         results = []
         
@@ -301,12 +334,12 @@ class FragmentAssembler:
             
         return results
 
-    def assemble_multiple_files(self, fragments: List[Dict]) -> List[AssembledFile]:
+    def assemble_multiple_files(self, fragments: List[Dict], classifier=None) -> List[AssembledFile]:
         """
         Main entry point for fragment assembly.
         Takes raw cluster fragments and attempts to assemble them into files.
         """
-        return self.process_clusters(fragments)
+        return self.process_clusters(fragments, classifier=classifier)
 
     def _extract_domain(self, link: str) -> str:
         """Simple domain extractor for grouping."""
@@ -319,7 +352,7 @@ class FragmentAssembler:
         except:
             return "other"
 
-    def process_clusters(self, fragments: List[Dict]) -> List[AssembledFile]:
+    def process_clusters(self, fragments: List[Dict], classifier=None) -> List[AssembledFile]:
         """Иерархическая сборка: группировка -> сборка"""
         # 1. Преобразуем в объекты Fragment
         from file_reconstructor import FileReconstructor
@@ -355,12 +388,12 @@ class FragmentAssembler:
 
         # 3. Smart Separation (Manus Algo) via Rust Accelerator
         results = []
-        print("DEBUG: Starting Smart Separation...")
+        logger.info("Starting Smart Separation...")
         
         try:
             from rust_accelerator import FragmentClusterer
             import rust_accelerator
-            print(f"DEBUG: Rust FragmentClusterer imported.")
+            logger.debug(f"Rust FragmentClusterer imported.")
             
             # Identify candidates for Smart Clustering
             # Group by domain for better precision
@@ -389,12 +422,12 @@ class FragmentAssembler:
             
             # Process Standard Groups
             for group in standard_groups:
-                assembled_files = self.assemble_group(group)
+                assembled_files = self.assemble_group(group, classifier=classifier)
                 results.extend(assembled_files)
             
             # Process Smart Pools
             for domain, pool in smart_pools.items():
-                print(f"DEBUG: Processing Smart Pool for {domain}: {len(pool)} fragments")
+                logger.debug(f"Processing Smart Pool for {domain}: {len(pool)} fragments")
                 if not pool: continue
                 
                 clusterer = FragmentClusterer()
@@ -408,7 +441,7 @@ class FragmentAssembler:
                 # Tune clusterer based on domain/density? (Optional future step)
                 
                 rust_clusters = clusterer.cluster_fragments()
-                print(f"DEBUG: {domain} -> {len(rust_clusters)} clusters")
+                logger.debug(f"{domain} -> {len(rust_clusters)} clusters")
                 
                 for cluster_indices in rust_clusters:
                     cluster_frags = [unique_pool[idx] for idx in cluster_indices]
@@ -417,19 +450,19 @@ class FragmentAssembler:
                     cluster_frags = sorted(list({f.offset: f for f in cluster_frags}.values()), key=lambda x: x.offset)
                     
                     # Assemble with ignore_gaps=True (gap-aware splitting inside)
-                    assembled_files = self.assemble_group(cluster_frags, ignore_gaps=True)
+                    assembled_files = self.assemble_group(cluster_frags, ignore_gaps=True, classifier=classifier)
                     results.extend(assembled_files)
                         
         except ImportError as e:
-            print(f"DEBUG: Rust Import Error: {e}")
+            logger.debug(f"Rust Import Error: {e}")
             logger.warning(f"Rust FragmentClusterer not available: {e}. Using fallback.")
             
             # Fallback: strict per-group assembly ONLY (No "Super Group")
             for group in groups:
-                 assembled_files = self.assemble_group(group, ignore_gaps=False) 
+                 assembled_files = self.assemble_group(group, ignore_gaps=False, classifier=classifier) 
                  results.extend(assembled_files)
 
-        print(f"DEBUG: Total results: {len(results)}")
+        logger.debug(f"Total results: {len(results)}")
         return results
 
 # --- UNIT TESTS ---

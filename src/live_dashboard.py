@@ -11,7 +11,7 @@ import time
 
 
 class LiveDashboard:
-    """Professional minimal dashboard - ddrescue/smartctl style"""
+    """Professional minimal dashboard - ddrescue/smartctl style (Linear Block Map)"""
 
     def __init__(self, total_size: int, image_path: str, output_dir: str):
         self.total_size = total_size
@@ -31,10 +31,12 @@ class LiveDashboard:
         self.speed_history = deque(maxlen=60)
         self.activity_log = deque(maxlen=5)
 
-        # Disk map (4 rows x 50 cols)
+        # Disk map (Linear 200 blocks)
         self.disk_map_width = 50
         self.disk_map_rows = 4
-        self.disk_map = [[0] * self.disk_map_width for _ in range(self.disk_map_rows)]
+        self.total_blocks = self.disk_map_width * self.disk_map_rows
+        # 0: Unscanned, 1: Scanned, 2: Found Data, 3: Hot/Recent
+        self.disk_map = [0] * self.total_blocks
 
         # Top candidate
         self.top_candidate = None
@@ -52,26 +54,40 @@ class LiveDashboard:
         self.current_position = position
         self.bytes_scanned = position
 
+        # Mark blocks as scanned (1)
+        if self.total_size > 0:
+            pct = position / self.total_size
+            blocks_scanned = int(pct * self.total_blocks)
+            # Fill up to current position
+            if self.is_reverse:
+                # Fill from end back
+                 start_idx = self.total_blocks - blocks_scanned
+                 for i in range(start_idx, self.total_blocks):
+                     if self.disk_map[i] == 0: self.disk_map[i] = 1
+            else:
+                # Fill from start forward
+                 for i in range(blocks_scanned):
+                     if self.disk_map[i] == 0: self.disk_map[i] = 1
+
         now = time.time()
         dt = now - self._last_speed_time
         if dt >= 1.0:
-            db = position - self._last_speed_bytes
+            db = abs(position - self._last_speed_bytes)
             current_speed = (db / 1024 / 1024) / dt if dt > 0 else 0
             self.speed_history.append(current_speed)
             self._last_speed_time = now
             self._last_speed_bytes = position
 
     def update_disk_map(self, offset: int, intensity: int):
-        """Update disk activity map at the correct position"""
-        if self.total_size == 0:
-            return
-        cell_size = self.total_size // self.disk_map_width
-        if cell_size == 0:
-            return
-        col = min(self.disk_map_width - 1, offset // cell_size)
-        # Distribute across rows based on intensity
-        row = min(self.disk_map_rows - 1, intensity // 25)
-        self.disk_map[row][col] = min(3, self.disk_map[row][col] + 1)
+        """Update disk activity map with FOUND DATA (2)"""
+        if self.total_size == 0: return
+
+        # Calculate block index
+        block_idx = int((offset / self.total_size) * self.total_blocks)
+        if 0 <= block_idx < self.total_blocks:
+            # Mark as found data (2) or hot (3)
+            # Intensity logic? Just mark as found.
+            self.disk_map[block_idx] = 2
 
     def add_log(self, message: str):
         """Add log entry (no emoji, just timestamp + message)"""
@@ -79,7 +95,7 @@ class LiveDashboard:
         self.activity_log.append(f"  {timestamp}  {message}")
 
     def render(self) -> Text:
-        """Render complete dashboard as plain text"""
+        """Render complete dashboard as plain text with colors"""
         output = Text()
 
         # Title line
@@ -88,7 +104,7 @@ class LiveDashboard:
             f"Ultimate Recovery v11.5 - {img_name} -> {self.output_dir}/\n",
             style="bold white",
         )
-        output.append("=" * 64 + "\n\n")
+        output.append("═" * 64 + "\n\n")
 
         # --- SCAN PROGRESS ---
         output.append("[SCAN PROGRESS]", style="bold")
@@ -107,15 +123,19 @@ class LiveDashboard:
         )
         bar_width = 40
         filled = int(bar_width * progress_pct / 100)
-        if filled < bar_width:
-            bar = "=" * filled + ">" + " " * (bar_width - filled - 1)
-        else:
-            bar = "=" * bar_width
+        
+        # Unicode Bar
+        bar_char = "█"
+        empty_char = "░"
+        bar = bar_char * filled + empty_char * (bar_width - filled)
+        
         gb_done = self.bytes_scanned / 1024 / 1024 / 1024
         gb_total = self.total_size / 1024 / 1024 / 1024
-        output.append(
-            f"  Completed: [{bar}] {progress_pct:.1f}%  ({gb_done:.1f}/{gb_total:.1f} GB)\n"
-        )
+        
+        # Color based on progress?
+        output.append(f"  Completed: [")
+        output.append(bar, style="green")
+        output.append(f"] {progress_pct:.1f}%  ({gb_done:.1f}/{gb_total:.1f} GB)\n")
 
         # Speed
         current_speed = self.speed_history[-1] if self.speed_history else 0
@@ -130,6 +150,7 @@ class LiveDashboard:
 
         # Time
         elapsed = time.time() - self.start_time
+        # Simplified ETA calculation
         remaining_bytes = self.total_size - self.bytes_scanned
         eta = (
             remaining_bytes / (avg_speed * 1024 * 1024) if avg_speed > 0 else 0
@@ -140,19 +161,26 @@ class LiveDashboard:
 
         # --- DISK MAP ---
         output.append(
-            "[DISK MAP - Activity density, last 60 seconds]\n", style="bold"
+            "[DISK MAP - Linear Surface Scan]\n", style="bold"
         )
-        map_chars = [" ", ".", "=", "#"]
+        # Legend
+        output.append("  Legend: ")
+        output.append("░ Unscanned  ", style="dim")
+        output.append("▒ Scanned  ", style="cyan")
+        output.append("█ Found Data\n", style="bold green")
+
+        # Render Blocks
+        block_chars = ["░", "▒", "█", "█"]
+        styles = ["dim", "cyan", "bold green", "bold red"]
+        
         for row in range(self.disk_map_rows):
-            output.append("  0%  [")
-            for col in range(self.disk_map_width):
-                val = self.disk_map[row][col]
-                ch = map_chars[min(3, val)]
-                if val >= 2:
-                    output.append(ch, style="cyan")
-                else:
-                    output.append(ch, style="dim")
-            output.append("] 100%\n")
+            start_idx = row * self.disk_map_width
+            end_idx = start_idx + self.disk_map_width
+            output.append("  [")
+            for i in range(start_idx, end_idx):
+                val = self.disk_map[i]
+                output.append(block_chars[val], style=styles[val])
+            output.append("]\n")
         output.append("\n")
 
         # --- STATISTICS ---
@@ -181,7 +209,7 @@ class LiveDashboard:
         output.append("\n")
 
         # --- FOOTER ---
-        output.append("=" * 64 + "\n")
+        output.append("═" * 64 + "\n")
         output.append(
             "Controls: [P]ause  [S]kip  [V]iew  [C]heckpoint  [Q]uit\n",
             style="dim",

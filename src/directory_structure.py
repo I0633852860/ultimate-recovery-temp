@@ -41,6 +41,9 @@ class DirectoryManager:
             'candidates_validated': self.base_dir / '06_TEMP_CANDIDATES' / 'validated',
             'candidates_rejected': self.base_dir / '06_TEMP_CANDIDATES' / 'rejected',
             'candidates_failed': self.base_dir / '06_TEMP_CANDIDATES' / 'failed',
+            
+            # Semantic Assembly
+            'semantic_groups': self.base_dir / '07_SEMANTIC_GROUPS',
         }
         
     def create_structure(self):
@@ -149,6 +152,19 @@ Professional recovery reports.
 Intermediate files currently being processed or validated.
 
 **⚠️ This folder is automatically cleaned up after the session ends.**
+""",
+            '07_SEMANTIC_GROUPS': """# 🧠 Semantic Groups
+
+Fragments grouped by content category (Trading, Psychology, etc.).
+
+## Purpose:
+These files were NOT fully recoverable/verifiable as complete files, but they contain strong keyword matches for specific categories.
+They are likely valid fragments of larger lost videos.
+
+## Structure:
+- **Trading/**: Market analysis, charts, financial terms.
+- **Psychology/**: Mindset, emotion control.
+- **Masterclasses/**: Educational content.
 """
         }
         
