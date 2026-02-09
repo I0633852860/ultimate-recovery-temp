@@ -1,0 +1,17 @@
+[package]
+name = "rust-recovery"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# CLI parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Memory mapping for zero-copy disk access
+memmap2 = "0.9"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Shared memory with Arc
