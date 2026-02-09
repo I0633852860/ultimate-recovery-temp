@@ -1,0 +1,13 @@
+# Ultimate File Recovery - Production Dependencies
+# Optimized for Intel GPU / Low-end hardware (OptiPlex 3070 Micro)
+
+# Core UI library
+rich>=13.0.0
+
+# NO heavy ML libraries (optimized for Intel GPU)
+# ❌ tensorflow - too heavy
+# ❌ torch - requires CUDA
+# ❌ scikit-learn - not needed (using lightweight heuristics)
+
+# Python version requirement
+# python>=3.11
