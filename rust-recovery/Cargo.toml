@@ -14,4 +14,8 @@ memmap2 = "0.9"
 thiserror = "1.0"
 anyhow = "1.0"
 
-# Shared memory with Arc
+# Parallel processing
+rayon = "1.10"
+
+# Async runtime and channels
+tokio = { version = "1.40", features = ["sync"] }
