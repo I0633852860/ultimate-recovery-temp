@@ -2,8 +2,10 @@ use crate::disk::DiskImage;
 use crate::error::Result;
 use crate::simd_search::{find_pattern_simd, scan_block_simd};
 use crate::types::{
-    EnrichedLink, HotFragment, ScanConfig, ScanProgress, ScanResult,
+    EnrichedLink, HotFragment, ScanConfig, ScanProgress, ScanResult, Offset,
 };
+use crate::matcher::{EnhancedMatcher, calculate_fragment_score, validate_data_chunk};
+use crate::entropy::{calculate_shannon_entropy, get_entropy_category};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -19,7 +21,7 @@ pub struct ChunkInfo {
 /// Parallel file scanner with SIMD-accelerated pattern matching
 pub struct ParallelScanner {
     config: ScanConfig,
-    patterns: Vec<Vec<u8>>,
+    enhanced_matcher: EnhancedMatcher,
 }
 
 impl ParallelScanner {
@@ -31,24 +33,19 @@ impl ParallelScanner {
                 .build_global();
         }
 
-        // Default YouTube patterns
-        let patterns = vec![
-            b"youtube.com/watch?v=".to_vec(),
-            b"youtu.be/".to_vec(),
-            b"youtube.com/shorts/".to_vec(),
-        ];
+        let enhanced_matcher = EnhancedMatcher::new();
 
-        Self { config, patterns }
+        Self { config, enhanced_matcher }
     }
 
-    pub fn with_patterns(config: ScanConfig, patterns: Vec<Vec<u8>>) -> Self {
+    pub fn with_matcher(config: ScanConfig, matcher: EnhancedMatcher) -> Self {
         if config.num_threads > 0 {
             let _ = rayon::ThreadPoolBuilder::new()
                 .num_threads(config.num_threads)
                 .build_global();
         }
 
-        Self { config, patterns }
+        Self { config, enhanced_matcher: matcher }
     }
 
     /// Scan a disk image with progress updates via tokio channel
@@ -78,9 +75,9 @@ impl ParallelScanner {
         }
 
         let total_chunks = chunks.len();
-        let patterns = &self.patterns;
         let config = &self.config;
         let sender_clone = sender;
+        let matcher = &self.enhanced_matcher;
 
         // Parallel scan with panic isolation
         let all_links: Vec<Vec<EnrichedLink>> = chunks
@@ -101,15 +98,17 @@ impl ParallelScanner {
 
                 // Isolate panics with catch_unwind
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.scan_chunk(chunk_data, chunk_info.offset, patterns)
+                    self.scan_chunk_with_matcher(chunk_data, chunk_info.offset, matcher.clone_fresh())
                 }));
 
                 match result {
                     Ok((links, hot_fragment)) => {
                         // Send hot fragment if found
-                        if let (Some(fragment, Some(ref s))) = (hot_fragment, sender_clone) {
-                            if !s.is_closed() {
-                                let _ = s.blocking_send(ScanProgress::HotFragment(fragment));
+                        if let Some(ref fragment) = hot_fragment {
+                            if let Some(ref s) = sender_clone {
+                                if !s.is_closed() {
+                                    let _ = s.blocking_send(ScanProgress::HotFragment(fragment.clone()));
+                                }
                             }
                         }
                         Some(links)
@@ -157,55 +156,20 @@ impl ParallelScanner {
         })
     }
 
-    /// Scan a single chunk and return (links, optional hot_fragment)
-    fn scan_chunk(
+    /// Scan a single chunk with enhanced matcher and return (links, optional hot_fragment)
+    fn scan_chunk_with_matcher(
         &self,
         chunk_data: &[u8],
         offset: u64,
-        patterns: &[Vec<u8>],
+        mut matcher: EnhancedMatcher,
     ) -> (Vec<EnrichedLink>, Option<HotFragment>) {
         let mut links = Vec::new();
-        let mut youtube_count = 0;
         let mut json_markers = 0;
         let mut cyrillic_count = 0;
 
-        // Scan using SIMD
-        for pattern in patterns {
-            let mut search_offset = 0;
-            while let Some(pos) = find_pattern_simd(&chunk_data[search_offset..], pattern) {
-                let abs_pos = search_offset + pos;
-                let abs_offset = offset + abs_pos as u64;
-
-                // Extract video ID (11 characters after pattern)
-                if abs_pos + pattern.len() + 11 <= chunk_data.len() {
-                    let video_id = String::from_utf8_lossy(
-                        &chunk_data[abs_pos + pattern.len()..abs_pos + pattern.len() + 11],
-                    )
-                    .to_string();
-
-                    let url = format!(
-                        "https://youtube.com/watch?v={}",
-                        String::from_utf8_lossy(
-                            &chunk_data[abs_pos + pattern.len()..abs_pos + pattern.len() + 11]
-                        )
-                    );
-
-                    links.push(EnrichedLink::new(
-                        url,
-                        video_id,
-                        abs_offset,
-                        "youtube_url".to_string(),
-                        0.9,
-                    ));
-                    youtube_count += 1;
-                }
-
-                search_offset = abs_pos + 1;
-                if search_offset >= chunk_data.len() {
-                    break;
-                }
-            }
-        }
+        // Use enhanced matcher for YouTube links
+        links = matcher.scan_chunk(chunk_data, offset as usize, self.config.deduplicate);
+        let youtube_count = links.len();
 
         // Fast block scan for hot fragment detection
         let block_size = 32;
@@ -255,20 +219,28 @@ impl ParallelScanner {
             cyrillic_count as f32 / chunk_data.len() as f32
         };
 
-        // Calculate target score
-        let target_score = self.calculate_target_score(youtube_count, cyrillic_density, json_markers);
+        // Calculate target score using new enhanced scoring
+        let fragment_score = calculate_fragment_score(chunk_data, youtube_count, cyrillic_density, json_markers);
+        let target_score = fragment_score.overall_score;
+
+        // Calculate entropy for the chunk
+        let entropy = calculate_shannon_entropy(chunk_data);
+        let entropy_category = get_entropy_category(chunk_data);
 
         // Create hot fragment if promising
-        let hot_fragment = if target_score > 10.0 && !is_empty {
+        let hot_fragment = if target_score > 20.0 && !is_empty {
             let file_type = self.guess_file_type_fast(chunk_data);
 
             let mut fragment = HotFragment::new(offset, chunk_data.len());
             fragment.youtube_count = youtube_count;
             fragment.cyrillic_density = cyrillic_density;
             fragment.json_markers = json_markers;
-            fragment.has_valid_json = file_type == "json";
+            fragment.has_valid_json = fragment_score.is_valid_json;
             fragment.target_score = target_score;
             fragment.file_type_guess = file_type;
+            fragment.entropy = entropy;
+            fragment.entropy_category = entropy_category.to_string();
+            fragment.fragment_score = fragment_score;
 
             Some(fragment)
         } else {
@@ -276,6 +248,17 @@ impl ParallelScanner {
         };
 
         (links, hot_fragment)
+    }
+
+    /// Legacy scan_chunk method (kept for compatibility)
+    fn scan_chunk(
+        &self,
+        chunk_data: &[u8],
+        offset: u64,
+        _patterns: &[Vec<u8>],
+    ) -> (Vec<EnrichedLink>, Option<HotFragment>) {
+        // Delegate to new method with a fresh matcher
+        self.scan_chunk_with_matcher(chunk_data, offset, self.enhanced_matcher.clone_fresh())
     }
 
     /// Create aligned chunks from data
