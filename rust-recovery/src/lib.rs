@@ -17,6 +17,9 @@ pub mod types;
 pub mod scanner;
 pub mod matcher;
 pub mod entropy;
+pub mod exfat;
+pub mod fragment_linker;
+pub mod smart_separation;
 
 // Re-export commonly used types
 pub use types::{Offset, Size, ClusterId};
