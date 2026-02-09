@@ -1,3 +1,5 @@
+use crate::smart_separation::ByteFrequency;
+
 /// Newtype wrapper for byte offsets in disk images
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Offset(pub u64);
@@ -265,6 +267,101 @@ impl FragmentScore {
     pub fn is_processing_worthy(&self) -> bool {
         self.overall_score > 30.0 && !self.is_compressed
     }
+}
+
+/// Fragment metadata for stream assembly
+#[derive(Debug, Clone)]
+pub struct StreamFragment {
+    pub offset: u64,
+    pub size: usize,
+    pub base_score: f32,
+    pub file_type: String,
+    pub links: Vec<String>,
+    pub feature_vector: ByteFrequency,
+    pub fragment_score: FragmentScore,
+}
+
+impl StreamFragment {
+    pub fn from_bytes(
+        offset: u64,
+        data: &[u8],
+        file_type: impl Into<String>,
+        base_score: f32,
+        fragment_score: FragmentScore,
+    ) -> Self {
+        Self {
+            offset,
+            size: data.len(),
+            base_score,
+            file_type: file_type.into(),
+            links: Vec::new(),
+            feature_vector: ByteFrequency::from_bytes(data),
+            fragment_score,
+        }
+    }
+
+    pub fn with_links<I>(mut self, links: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.links = links.into_iter().collect();
+        self
+    }
+
+    pub fn end_offset(&self) -> u64 {
+        self.offset + self.size as u64
+    }
+
+    pub fn total_score(&self) -> f32 {
+        self.base_score + self.fragment_score.overall_score
+    }
+
+    pub fn has_valid_structure(&self) -> bool {
+        self.fragment_score.is_valid_structure()
+    }
+}
+
+/// Scoring weights for stream assembly
+#[derive(Debug, Clone)]
+pub struct StreamScoringWeights {
+    pub max_gap: u64,
+    pub max_overlap: u64,
+    pub gap_penalty: f32,
+    pub overlap_penalty: f32,
+    pub type_match_bonus: f32,
+    pub type_mismatch_penalty: f32,
+    pub cosine_weight: f32,
+    pub jaccard_weight: f32,
+    pub structure_bonus: f32,
+    pub min_edge_score: f32,
+    pub max_lookback: usize,
+}
+
+impl Default for StreamScoringWeights {
+    fn default() -> Self {
+        Self {
+            max_gap: 1_048_576,
+            max_overlap: 64 * 1024,
+            gap_penalty: 15.0,
+            overlap_penalty: 20.0,
+            type_match_bonus: 8.0,
+            type_mismatch_penalty: 5.0,
+            cosine_weight: 25.0,
+            jaccard_weight: 10.0,
+            structure_bonus: 6.0,
+            min_edge_score: 5.0,
+            max_lookback: 200,
+        }
+    }
+}
+
+/// Assembled stream result
+#[derive(Debug, Clone)]
+pub struct AssembledStream {
+    pub fragments: Vec<StreamFragment>,
+    pub confidence: f32,
+    pub total_score: f32,
+    pub reasons: Vec<String>,
 }
 
 /// Validation results for a data chunk
