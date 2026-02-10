@@ -28,3 +28,13 @@ serde_json = "1.0"
 html-escape = "0.2"
 sha2 = "0.10"
 ahash = "0.8"
+
+# TUI (Terminal User Interface)
+ratatui = "0.26"
+crossterm = { version = "0.27", features = ["event-stream"] }
+
+# HTML templates (temporarily removed for testing)
+# askama = "0.12"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }

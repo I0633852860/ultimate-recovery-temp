@@ -22,6 +22,8 @@ pub mod fragment_linker;
 pub mod smart_separation;
 pub mod stream_solver;
 pub mod checkpoint;
+pub mod tui;
+pub mod report;
 
 // Re-export commonly used types
 pub use types::{Offset, Size, ClusterId};
@@ -39,4 +41,6 @@ pub use checkpoint::{
     Checkpoint, CheckpointManager, ResumeValidation, compute_image_hash, create_checkpoint,
     validate_resume, load_checkpoint, save_checkpoint_atomic, save_checkpoint_blocking,
 };
+pub use tui::{TuiApp, TuiEvent, TuiApplication};
+pub use report::{ProfessionalReportGenerator, ReportContext, create_report_metadata, create_scan_results};
 pub use error::{RecoveryError, Result};

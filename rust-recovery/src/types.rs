@@ -85,6 +85,12 @@ pub struct ScanConfig {
 
     /// Minimum confidence level
     pub min_confidence: f32,
+
+    /// Reverse scan mode
+    pub reverse: bool,
+
+    /// NVMe optimization
+    pub nvme_optimization: bool,
 }
 
 impl Default for ScanConfig {
@@ -95,6 +101,8 @@ impl Default for ScanConfig {
             num_threads: 0,
             deduplicate: true,
             min_confidence: 0.0,
+            reverse: false,
+            nvme_optimization: false,
         }
     }
 }
