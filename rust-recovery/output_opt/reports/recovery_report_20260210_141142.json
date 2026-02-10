@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "timestamp": "2026-02-10 14:11:42",
+    "version": "12.0",
+    "tool_name": "Ultimate File Recovery",
+    "image_path": "test_optimization.img",
+    "output_dir": "output_opt"
+  },
+  "scan_results": {
+    "image_size_mb": 1.0,
+    "bytes_scanned_mb": 1.0,
+    "candidates_found": 0,
+    "files_recovered": 0,
+    "scan_time_sec": 0.340748936,
+    "avg_speed_mbps": 2.9347120250435648,
+    "max_speed_mbps": 2.9347120250435648,
+    "min_speed_mbps": 2.9347120250435648,
+    "reverse_scan": false,
+    "exfat_enabled": false,
+    "nvme_optimization": false
+  },
+  "clusters": [],
+  "recovered_files": [],
+  "failure_reasons": [
+    "No valid data structures found in scanned data",
+    "Try adjusting --target-size-min or --chunk-max"
+  ],
+  "stats": {
+    "total_processed": 0,
+    "successful_recoveries": 0,
+    "failed_recoveries": 0,
+    "success_rate": 0.0,
+    "total_bytes_recovered": 0,
+    "efficiency_score": 0.0,
+    "candidates_rejected": 0
+  },
+  "success": false,
+  "report_checksum": "30b33eb8f3c6284c4cfdc31241f33a9e576c30ecb7d84d146307ab95fa2d46ee"
+}

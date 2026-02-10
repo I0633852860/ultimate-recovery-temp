@@ -1,24 +1,18 @@
-mod cli;
-mod disk;
-mod error;
-mod simd_search;
-mod types;
-mod scanner;
-mod matcher;
-mod entropy;
-mod tui;
-mod report;
-
+use rust_recovery::cli::Args;
 use clap::Parser;
-use cli::Args;
-use disk::DiskImage;
-use error::Result;
-use types::{Offset, ScanConfig};
-use scanner::ParallelScanner;
+use rust_recovery::disk::DiskImage;
+use rust_recovery::error::{Result, RecoveryError};
+use rust_recovery::types::{Offset, ScanConfig, ScanProgress, StreamFragment, FragmentScore};
+use rust_recovery::scanner::ParallelScanner;
+use rust_recovery::report;
+use rust_recovery::stream_solver;
+use tokio::runtime::Runtime;
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use tui::{TuiApplication, TuiApp, TuiEvent};
-use report::{ProfessionalReportGenerator, create_report_metadata, create_scan_results, ReportError};
+use rust_recovery::tui::{TuiApplication, TuiApp, TuiEvent};
+use rust_recovery::report::{ProfessionalReportGenerator, create_report_metadata, create_scan_results};
+use rust_recovery::recovery::{clean_file_content, extract_title};
 
 use std::path::Path;
 use std::fs;
@@ -44,7 +38,7 @@ fn run() -> Result<()> {
     let output_dir = args.output.clone();
     if !output_dir.exists() {
         fs::create_dir_all(&output_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create output directory: {}", e))?;
+            .map_err(|e| RecoveryError::Config(format!("Failed to create output directory: {}", e)))?;
     }
 
     // Create session info
@@ -57,7 +51,7 @@ fn run() -> Result<()> {
     
     let session_path = output_dir.join("session.info");
     fs::write(&session_path, session_info)
-        .map_err(|e| anyhow::anyhow!("Failed to save session info: {}", e))?;
+        .map_err(|e| RecoveryError::Config(format!("Failed to save session info: {}", e)))?;
 
     // Open disk image
     println!("Opening disk image...");
@@ -70,13 +64,13 @@ fn run() -> Result<()> {
     println!();
 
     // Create scan configuration
-    let scan_config = ScanConfig::new(
-        args.chunk_min_bytes(),
-        args.chunk_max_bytes(),
-        args.target_size_min_bytes(),
+    let mut scan_config = ScanConfig::new(
+        args.chunk_max_bytes() as usize,
+        64 * 1024, // 64KB overlap
+        0,         // auto threads
     );
-    let scan_config.reverse = args.reverse;
-    let scan_config.nvme_optimization = args.nvme;
+    scan_config.reverse = args.reverse;
+    scan_config.nvme_optimization = args.nvme;
 
     // Create report generator
     let report_generator = ProfessionalReportGenerator::new(&output_dir);
@@ -91,7 +85,7 @@ fn run() -> Result<()> {
         tui_sender = Some(sender);
         
         // Create TUI application
-        let app = TuiApp::new(
+        let mut app = TuiApp::new(
             image_size,
             args.image.to_string_lossy().to_string(),
             output_dir.to_string_lossy().to_string(),
@@ -112,29 +106,55 @@ fn run() -> Result<()> {
     // Print configuration
     print_configuration(&args);
 
-    // Run the main scanning pipeline
-    let scan_results = run_scan_pipeline(
-        &disk,
-        &args,
-        &scan_config,
-        tui_sender.as_ref(),
-        &output_dir,
-    )?;
+    // Run the main scanning pipeline in a separate thread if TUI is enabled
+    // This allows TUI to run on the main thread (required for some terminals)
+    
+    // items to move into thread
+    let disk_clone = disk.clone();
+    let args_clone = args.clone();
+    let scan_config_clone = scan_config.clone();
+    let output_dir_clone = output_dir.clone();
+    let tui_sender_clone = tui_sender.clone();
 
-    // Send completion event
-    if let Some(ref sender) = tui_sender {
-        let _ = sender.send(TuiEvent::ScanCompleted);
+    let scan_thread = std::thread::spawn(move || {
+        let result = run_scan_pipeline(
+            disk_clone,
+            &args_clone,
+            &scan_config_clone,
+            tui_sender_clone.as_ref(),
+            &output_dir_clone,
+        );
+
+        // Send completion event
+        if let Some(ref sender) = tui_sender_clone {
+            let _ = sender.send(TuiEvent::ScanCompleted);
+        }
+        
+        result
+    });
+
+    // Run TUI if enabled
+    if let Some(mut app) = tui_app {
+        // This will block until Q is pressed or scan completes
+        if let Err(e) = app.run() {
+            eprintln!("TUI Error: {}", e);
+        }
     }
 
+    // Wait for scan to finish and get results
+    // If TUI was quit early, we still wait for scan to complete
+    let scan_results = scan_thread.join()
+        .map_err(|_| RecoveryError::Config("Scan thread panicked".to_string()))??;
+
     // Generate reports
-    println!("Generating reports...");
+    println!("\nScanning complete. Generating reports...");
     let metadata = create_report_metadata(
         &args.image.to_string_lossy(),
         &output_dir.to_string_lossy(),
         "12.0",
     );
     
-    let scan_stats = create_scan_results(
+    let mut scan_stats = create_scan_results(
         image_size,
         scan_results.bytes_scanned,
         scan_results.candidates_found,
@@ -143,6 +163,7 @@ fn run() -> Result<()> {
         args.enable_exfat,
         args.nvme,
     );
+    scan_stats.files_recovered = scan_results.recovered_files.len() as u32;
 
     let report_paths = report_generator.generate_full_report(
         scan_stats,
@@ -150,16 +171,16 @@ fn run() -> Result<()> {
         scan_results.recovered_files,
         scan_results.failure_reasons,
         metadata,
-    )?;
+    ).map_err(|e| RecoveryError::Config(format!("Report generation failed: {}", e)))?;
 
     println!("Reports generated:");
     println!("  HTML: {}", report_paths.html_path.display());
     println!("  JSON: {}", report_paths.json_path.display());
 
-    // Shutdown TUI if it was running
-    if let Some(mut app) = tui_app {
-        let _ = app.run(); // This will clean up the terminal
-    }
+    // TUI cleanup is automatic via Drop, but we can ensure terminal is restored here if needed
+    // if let Some(mut app) = tui_app {
+    //     let _ = app.run(); // already ran
+    // }
 
     println!("Recovery complete!");
     Ok(())
@@ -178,61 +199,215 @@ struct ScanResults {
 
 /// Main scanning pipeline
 fn run_scan_pipeline(
-    disk: &DiskImage,
+    disk: DiskImage,
     args: &Args,
     scan_config: &ScanConfig,
     tui_sender: Option<&mpsc::UnboundedSender<TuiEvent>>,
     output_dir: &Path,
 ) -> Result<ScanResults> {
     let start_time = std::time::Instant::now();
-    let mut bytes_scanned = 0u64;
-    let mut candidates_found = 0u32;
-    let mut recovered_files = Vec::new();
-    let mut clusters = Vec::new();
-    let mut failure_reasons = Vec::new();
-
+    
     // Test basic read operations first
-    test_disk_access(disk)?;
+    test_disk_access(&disk)?;
 
     // Send initial status
     if let Some(sender) = tui_sender {
         let _ = sender.send(TuiEvent::LogMessage {
-            message: "Disk access verified, starting scan".to_string(),
+            message: "Disk access verified, starting real-time scan".to_string(),
         });
     }
 
-    // Create parallel scanner
-    let scanner = ParallelScanner::new(scan_config.clone());
-    
-    // Simulate scanning process (placeholder for actual implementation)
-    simulate_scan_process(
-        disk,
-        args,
-        scan_config,
-        tui_sender,
-        &mut bytes_scanned,
-        &mut candidates_found,
-        &mut recovered_files,
-        &mut clusters,
-    )?;
+    // Run the actual scanner
+    let (bytes_scanned, candidates_found, recovered_files, clusters) = 
+        run_real_scan(disk, args, scan_config, tui_sender, output_dir)?;
 
     let scan_duration = start_time.elapsed();
+    let mut failure_reasons = Vec::new();
 
     // If no files recovered, add failure reasons
     if recovered_files.is_empty() {
-        failure_reasons.push("No YouTube URL patterns found in scanned data".to_string());
-        failure_reasons.push("All candidates were smaller than minimum size".to_string());
-        failure_reasons.push("Disk image may be corrupted or encrypted".to_string());
+        failure_reasons.push("No valid data structures found in scanned data".to_string());
+        failure_reasons.push("Try adjusting --target-size-min or --chunk-max".to_string());
     }
 
     Ok(ScanResults {
         bytes_scanned,
-        candidates_found,
+        candidates_found: candidates_found as u32,
         scan_duration,
         clusters,
         recovered_files,
         failure_reasons,
     })
+}
+
+/// Perform real disk scanning using ParallelScanner
+fn run_real_scan(
+    disk: DiskImage,
+    _args: &Args,
+    scan_config: &ScanConfig,
+    tui_sender: Option<&mpsc::UnboundedSender<TuiEvent>>,
+    _output_dir: &Path,
+) -> Result<(u64, usize, Vec<report::RecoveredFile>, Vec<report::DataCluster>)> {
+    let rt = Arc::new(Runtime::new().map_err(|e| RecoveryError::Config(e.to_string()))?);
+    let scanner = ParallelScanner::new(scan_config.clone());
+    
+    let (progress_tx, mut progress_rx) = mpsc::channel(100);
+    
+    let disk_clone = disk.clone();
+    let scanner_clone = scanner.clone();
+    let rt_clone = Arc::clone(&rt);
+    
+    // Start scanner in a background thread
+    let scan_handle = std::thread::spawn(move || {
+        rt_clone.block_on(async {
+            scanner_clone.scan(&disk_clone, progress_tx).await
+        })
+    });
+
+    let mut total_bytes_scanned = 0u64;
+    let mut candidates_count = 0usize;
+    let mut recovered_files = Vec::new();
+    let mut clusters = Vec::new();
+    let mut stream_fragments = Vec::new();
+
+    // Process progress updates
+    while let Some(progress) = rt.block_on(async { progress_rx.recv().await }) {
+        match progress {
+            ScanProgress::BytesScanned(bytes) => {
+                total_bytes_scanned += bytes;
+                if let Some(sender) = tui_sender {
+                    let _ = sender.send(TuiEvent::UpdatePosition {
+                        position: total_bytes_scanned, 
+                        bytes_scanned: total_bytes_scanned,
+                    });
+                }
+            }
+            ScanProgress::HotFragment(fragment) => {
+                candidates_count += 1;
+                
+                // Add to clusters for report
+                clusters.push(report::DataCluster {
+                    id: candidates_count,
+                    start_offset_hex: format!("0x{:X}", fragment.offset),
+                    end_offset_hex: format!("0x{:X}", fragment.offset + fragment.size as u64),
+                    size_bytes: fragment.size as u64,
+                    size_kb: (fragment.size / 1024) as u64,
+                    link_count: fragment.youtube_count as u32,
+                    density: fragment.cyrillic_density as f64,
+                    confidence: fragment.target_score as f64,
+                    links: Vec::new(), 
+                });
+
+                // Convert to StreamFragment for solver
+                let stream_frag = StreamFragment {
+                    offset: fragment.offset,
+                    size: fragment.size,
+                    base_score: fragment.target_score,
+                    file_type: fragment.file_type_guess.clone(),
+                    links: Vec::new(), // Optional: could extract links here
+                    feature_vector: rust_recovery::smart_separation::ByteFrequency::default(), 
+                    fragment_score: fragment.fragment_score.clone(),
+                };
+                stream_fragments.push(stream_frag);
+
+                if let Some(sender) = tui_sender {
+                    let _ = sender.send(TuiEvent::FragmentFound {
+                        offset: fragment.offset,
+                    });
+                }
+            }
+            ScanProgress::ChunkCompleted(offset) => {
+                if let Some(sender) = tui_sender {
+                    let _ = sender.send(TuiEvent::LogMessage {
+                        message: format!("Chunk at 0x{:X} completed", offset),
+                    });
+                }
+            }
+            ScanProgress::ChunkError(offset, err) => {
+                if let Some(sender) = tui_sender {
+                    let _ = sender.send(TuiEvent::LogMessage {
+                        message: format!("Error at 0x{:X}: {}", offset, err),
+                    });
+                }
+            }
+        }
+    }
+
+    // Wait for scan to finish
+    let _ = scan_handle.join().map_err(|_| RecoveryError::Config("Scanner thread panicked".to_string()))?;
+
+    // --- ASSEMBLE STREAMS ---
+    if !stream_fragments.is_empty() {
+        if let Some(sender) = tui_sender {
+            let _ = sender.send(TuiEvent::LogMessage {
+                message: format!("Assembling {} fragments into streams...", stream_fragments.len()),
+            });
+        }
+
+        let streams = stream_solver::assemble_streams(&stream_fragments);
+        
+        // Create output subdirectory for binary files
+        let bin_output_dir = _output_dir.join("01_RECOVERED_FILES");
+        if !bin_output_dir.exists() {
+            let _ = fs::create_dir_all(&bin_output_dir);
+        }
+
+        for (i, stream) in streams.into_iter().enumerate() {
+            let file_id = i + 1;
+            let file_type = stream.fragments[0].file_type.clone();
+            // Reconstruct file data by concatenating fragments
+            let mut raw_data = Vec::new();
+            for fragment in &stream.fragments {
+                if let Ok(slice) = disk.get_slice(Offset::new(fragment.offset), fragment.size) {
+                    raw_data.extend_from_slice(slice.data);
+                }
+            }
+
+            // Clean content (remove junk/nulls)
+            let file_data = clean_file_content(&raw_data, &file_type).into_owned();
+
+            // Generate filename with title if possible
+            let mut filename = format!("recovered_{:04}.{}", file_id, file_type);
+            if let Some(title) = extract_title(&file_data, &file_type) {
+                filename = format!("recovered_{:04}_{}.{}", file_id, title, file_type);
+            }
+            
+            let file_path = bin_output_dir.join(&filename);
+
+            let total_size_bytes = file_data.len() as u64;
+            let sha256 = rust_recovery::matcher::sha256_hash(&file_data);
+
+            // Physically save to disk
+            let validation_status = if fs::write(&file_path, &file_data).is_ok() {
+                report::ValidationStatus::Valid
+            } else {
+                report::ValidationStatus::Invalid
+            };
+            
+            recovered_files.push(report::RecoveredFile {
+                id: file_id,
+                filename: filename.clone(),
+                file_type,
+                confidence: stream.confidence as f64,
+                links: Vec::new(),
+                size_kb: (total_size_bytes / 1024) as u64,
+                sha256,
+                start_offset: stream.fragments.first().unwrap().offset,
+                end_offset: stream.fragments.last().unwrap().offset + stream.fragments.last().unwrap().size as u64,
+                validation_status,
+                recovery_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            });
+
+            if let Some(sender) = tui_sender {
+                let _ = sender.send(TuiEvent::FileRecovered { filename: filename.clone() });
+                let _ = sender.send(TuiEvent::LogMessage {
+                    message: format!("Saved recovered file: {} ({} KB)", filename, total_size_bytes / 1024),
+                });
+            }
+        }
+    }
+
+    Ok((total_bytes_scanned, candidates_count, recovered_files, clusters))
 }
 
 /// Test basic disk access
@@ -248,136 +423,6 @@ fn test_disk_access(disk: &DiskImage) -> Result<()> {
     Ok(())
 }
 
-/// Simulate the scanning process (placeholder implementation)
-fn simulate_scan_process(
-    disk: &DiskImage,
-    args: &Args,
-    scan_config: &ScanConfig,
-    tui_sender: Option<&mpsc::UnboundedSender<TuiEvent>>,
-    bytes_scanned: &mut u64,
-    candidates_found: &mut u32,
-    recovered_files: &mut Vec<report::RecoveredFile>,
-    clusters: &mut Vec<report::DataCluster>,
-) -> Result<()> {
-    let total_size = disk.size().as_u64();
-    let chunk_size = 1024 * 1024; // 1MB chunks for simulation
-    
-    println!("Simulating scan process...");
-    
-    // Create some test data for demonstration
-    let test_clusters = vec![
-        report::DataCluster {
-            id: 1,
-            start_offset_hex: "0x1000".to_string(),
-            end_offset_hex: "0x2000".to_string(),
-            size_bytes: 4096,
-            size_kb: 4,
-            link_count: 5,
-            density: 1.25,
-            confidence: 0.85,
-            links: vec![
-                "https://youtube.com/watch?v=abc123".to_string(),
-                "https://youtube.com/watch?v=def456".to_string(),
-            ],
-        },
-        report::DataCluster {
-            id: 2,
-            start_offset_hex: "0x5000".to_string(),
-            end_offset_hex: "0x6000".to_string(),
-            size_bytes: 4096,
-            size_kb: 4,
-            link_count: 3,
-            density: 0.75,
-            confidence: 0.70,
-            links: vec![
-                "https://youtube.com/watch?v=ghi789".to_string(),
-            ],
-        },
-    ];
-    
-    let test_files = vec![
-        report::RecoveredFile {
-            id: 1,
-            filename: "recovered_0001.json".to_string(),
-            file_type: "json".to_string(),
-            confidence: 0.95,
-            links: vec![
-                "https://youtube.com/watch?v=abc123".to_string(),
-            ],
-            size_kb: 15,
-            sha256: "abc123def456".to_string(),
-            start_offset: 0x1000,
-            end_offset: 0x1FFF,
-            validation_status: report::ValidationStatus::Valid,
-            recovery_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        },
-        report::RecoveredFile {
-            id: 2,
-            filename: "recovered_0002.txt".to_string(),
-            file_type: "text".to_string(),
-            confidence: 0.80,
-            links: vec![
-                "https://youtube.com/watch?v=def456".to_string(),
-                "https://youtube.com/watch?v=ghi789".to_string(),
-            ],
-            size_kb: 25,
-            sha256: "def456ghi789".to_string(),
-            start_offset: 0x5000,
-            end_offset: 0x5FFF,
-            validation_status: report::ValidationStatus::MinorIssues,
-            recovery_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        },
-    ];
-
-    // Simulate scanning with progress updates
-    let mut current_offset = 0u64;
-    let num_chunks = (total_size / chunk_size as u64).min(100); // Limit for demo
-    
-    for chunk in 0..num_chunks {
-        current_offset = chunk * chunk_size as u64;
-        *bytes_scanned = current_offset + chunk_size as u64;
-        *candidates_found += 2; // Simulate finding candidates
-        
-        // Send progress update
-        if let Some(sender) = tui_sender {
-            let _ = sender.send(TuiEvent::UpdatePosition {
-                position: current_offset,
-                bytes_scanned: *bytes_scanned,
-            });
-        }
-        
-        // Send fragment found event occasionally
-        if chunk % 20 == 0 {
-            if let Some(sender) = tui_sender {
-                let _ = sender.send(TuiEvent::FragmentFound {
-                    offset: current_offset,
-                });
-            }
-        }
-        
-        // Send file recovered event occasionally
-        if chunk % 50 == 0 && recovered_files.len() < test_files.len() {
-            let file = test_files[recovered_files.len()].clone();
-            if let Some(sender) = tui_sender {
-                let _ = sender.send(TuiEvent::FileRecovered {
-                    filename: file.filename.clone(),
-                });
-            }
-            recovered_files.push(file);
-        }
-        
-        // Sleep briefly to show progress
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    
-    // Add clusters
-    clusters.extend(test_clusters);
-    
-    println!("  Scan simulation complete: {} bytes scanned, {} candidates found", 
-        bytes_scanned, candidates_found);
-    
-    Ok(())
-}
 
 /// Print configuration information
 fn print_configuration(args: &Args) {

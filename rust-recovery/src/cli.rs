@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 /// Ultimate File Recovery - Rust Implementation
 /// Professional data recovery system for disk images
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "rust-recovery")]
 #[command(version = "0.1.0")]
 #[command(about = "Ultimate File Recovery - Rust Implementation", long_about = None)]

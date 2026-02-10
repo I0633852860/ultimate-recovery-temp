@@ -1,0 +1,4 @@
+version: 12.0
+image_file: test_optimization.img
+start_time: 2026-02-10T14:14:58
+parameters: Args { image: "test_optimization.img", target_size_min: 15, target_size_max: 300, reverse: false, nvme: false, early_exit: 0, output: "output_opt", enable_exfat: false, no_live: true, links_only: false, chunk_min: 32, chunk_max: 2048, full_exfat_recovery: true, semantic_scan: false }

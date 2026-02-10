@@ -3,6 +3,12 @@ pub struct ByteFrequency {
     pub values: [f32; 256],
 }
 
+impl Default for ByteFrequency {
+    fn default() -> Self {
+        Self { values: [0.0; 256] }
+    }
+}
+
 impl ByteFrequency {
     pub fn from_bytes(data: &[u8]) -> Self {
         let mut values = [0f32; 256];

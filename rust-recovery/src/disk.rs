@@ -25,6 +25,7 @@ impl<'a> FragmentSlice<'a> {
 }
 
 /// Zero-copy memory-mapped disk image with shared ownership
+#[derive(Clone)]
 pub struct DiskImage {
     mmap: Arc<Mmap>,
     size: Size,

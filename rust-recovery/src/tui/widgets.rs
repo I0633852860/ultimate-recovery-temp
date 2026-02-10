@@ -4,17 +4,12 @@
 //! disk heatmap, statistics, logs, and dashboard elements.
 
 use ratatui::{
-    backend::Backend,
-    layout::{Constraint, Direction, Layout, Margin},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Tabs, Widget,
-        Wrap,
+        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Widget,
     },
-    Frame,
 };
-use std::time::Duration;
 
 /// Create dashboard header widget
 pub fn create_dashboard_header(app: &super::TuiApp) -> impl Widget {
@@ -63,7 +58,7 @@ impl DashboardFooter {
         DashboardFooter
     }
     
-    pub fn render(&self) -> impl Widget + use<'_> {
+    pub fn render() -> impl Widget {
         Paragraph::new("Controls: [P]ause  [S]kip  [V]iew  [C]heckpoint  [Q]uit")
             .style(Style::default().fg(Color::Gray))
             .alignment(ratatui::layout::Alignment::Center)
@@ -104,7 +99,7 @@ impl DiskHeatmapWidget {
             chunks.push(Line::from(row_spans));
         }
 
-        let legend = vec![
+        let _legend = vec![
             Line::from(vec![
                 Span::styled("░ Unscanned  ", Style::default().fg(Color::DarkGray)),
                 Span::styled("▒ Scanned  ", Style::default().fg(Color::Blue)),
@@ -112,7 +107,7 @@ impl DiskHeatmapWidget {
             ]),
         ];
 
-        Paragraph::new([Text::from(Line::from("Legend:"))])
+        Paragraph::new("Legend:")
             .style(Style::default().fg(Color::Yellow))
             .scroll((0, 0))
             .block(block.clone())
@@ -205,11 +200,11 @@ impl DashboardWidget {
     }
     
     pub fn render_header(&self, app: &super::TuiApp) -> impl Widget {
-        DashboardHeader::new().render(app)
+        create_dashboard_header(app)
     }
 
     pub fn render_footer(&self) -> impl Widget {
-        DashboardFooter::new().render()
+        DashboardFooter::render()
     }
 }
 
@@ -302,7 +297,7 @@ fn format_duration(seconds: f64) -> String {
 }
 
 /// Helper function to create a block with title and borders
-pub fn create_block(title: &str, borders: Borders) -> Block {
+pub fn create_block(title: &str, borders: Borders) -> Block<'_> {
     Block::default()
         .title(Span::styled(
             title,
@@ -315,7 +310,7 @@ pub fn create_block(title: &str, borders: Borders) -> Block {
 }
 
 /// Helper function to create styled text
-pub fn create_styled_text(text: &str, color: Color, modifier: Modifier) -> Vec<Line> {
+pub fn create_styled_text(text: &str, color: Color, modifier: Modifier) -> Vec<Line<'_>> {
     vec![Line::from(Span::styled(
         text.to_string(),
         Style::default().fg(color).add_modifier(modifier),
@@ -323,7 +318,7 @@ pub fn create_styled_text(text: &str, color: Color, modifier: Modifier) -> Vec<L
 }
 
 /// Helper function to create centered text
-pub fn create_centered_text(text: &str, color: Color) -> Paragraph {
+pub fn create_centered_text(text: &str, color: Color) -> Paragraph<'_> {
     Paragraph::new(text)
         .style(Style::default().fg(color))
         .alignment(ratatui::layout::Alignment::Center)

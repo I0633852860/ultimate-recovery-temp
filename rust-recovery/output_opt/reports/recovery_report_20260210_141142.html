@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Отчет Ultimate File Recovery</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 10px 30px;
+
+            background: {
+                % if context.success %
+            }
+
+            #28a745 {
+                % else %
+            }
+
+            #dc3545 {
+                % endif %
+            }
+
+            ;
+            color: white;
+            border-radius: 50px;
+            font-weight: bold;
+            font-size: 1.2em;
+            margin-top: 20px;
+        }
+
+        .section {
+            padding: 30px 40px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .section:last-child {
+            border-bottom: none;
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            border-left: 5px solid #667eea;
+            padding-left: 15px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .file-list {
+            list-style: none;
+        }
+
+        .file-item {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .file-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+            transition: all 0.3s;
+        }
+
+        .file-name {
+            font-weight: bold;
+            color: #667eea;
+            font-size: 1.1em;
+        }
+
+        .file-meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+        }
+
+        .failure-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .failure-box h3 {
+            color: #856404;
+            margin-bottom: 15px;
+        }
+
+        .failure-box ul {
+            list-style-position: inside;
+            color: #856404;
+        }
+
+        .cluster-card {
+            background: #e7f3ff;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 10px;
+            border-left: 4px solid #2196F3;
+        }
+
+        .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin: 0 5px;
+        }
+
+        .badge-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge-warning {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .badge-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .badge-info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .configuration-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .config-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+        }
+
+        .config-label {
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .config-value {
+            color: #333;
+            font-family: 'Courier New', monospace;
+        }
+
+        .user-guide {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .user-guide h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .user-guide p,
+        .user-guide ul {
+            color: #444;
+            margin-bottom: 10px;
+        }
+
+        .user-guide code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>❌ Отчет Ultimate File Recovery</h1>
+            <p>Сгенерировано: 2026-02-10 14:11:42</p>
+            <div class="status">ФАЙЛЫ НЕ НАЙДЕНЫ</div>
+        </div>
+
+        <div class="section">
+            <h2>📘 Руководство (Как читать результаты)</h2>
+            <div class="user-guide">
+                <h3>🔍 Понимание результатов восстановления</h3>
+                <p>Система восстанавливает данные из сырых секторов диска. В зависимости от типа файла, вы увидите
+                    разные результаты:</p>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li><strong>TXT/UNKNOWN</strong>: Это сырые фрагменты.
+                        <ul>
+                            <li><code>_raw.bin</code>: Точные байты с диска (могут содержать мусор).
+                            </li>
+                            <li><code>_clean.txt</code>: Читаемая, отфильтрованная версия.</li>
+                        </ul>
+                    </li>
+                    <li><strong>JSON/CSV/HTML</strong>: Валидированные файлы с восстановленной структурой.</li>
+                    <li><strong>.json (metadata)</strong>: Для каждого файла есть JSON с метаданными и
+                        <strong>найденными YouTube ссылками</strong>.
+                    </li>
+                </ul>
+                <p style="margin-top: 10px;"><strong>Всегда проверяйте <code>.json</code> файл, если бинарный файл
+                        выглядит нечитаемым!</strong></p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>📊 Конфигурация сканирования</h2>
+            <div class="configuration-grid">
+                <div class="config-item">
+                    <div class="config-label">Файл образа</div>
+                    <div class="config-value">test_optimization.img</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Папка вывода</div>
+                    <div class="config-value">output_opt</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Обратное сканирование</div>
+                    <div class="config-value">Выключено</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Сканирование exFAT</div>
+                    <div class="config-value">Выключено</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">NVMe Оптимизация</div>
+                    <div class="config-value">Выключено</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Версия утилиты</div>
+                    <div class="config-value">12.0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>📊 Статистика сканирования</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Размер образа</div>
+                    <div class="stat-value">1.0 MB</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Сканировано</div>
+                    <div class="stat-value">1.0 MB</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Кандидатов найдено</div>
+                    <div class="stat-value">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Файлов восстановлено</div>
+                    <div class="stat-value">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Время сканирования</div>
+                    <div class="stat-value">0.3s</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Ср. Скорость</div>
+                    <div class="stat-value">2.9 MB/s</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Успешность</div>
+                    <div class="stat-value">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Эффективность</div>
+                    <div class="stat-value">0.0</div>
+                </div>
+            </div>
+        </div>
+
+        
+
+        
+
+        
+        <div class="section">
+            <div class="failure-box">
+                <h3>❌ Почему файлы не были восстановлены</h3>
+                <ul>
+                    
+                    <li>No valid data structures found in scanned data</li>
+                    
+                    <li>Try adjusting --target-size-min or --chunk-max</li>
+                    
+                </ul>
+                <p style="margin-top: 15px; font-weight: bold;">
+                    Рекомендации:
+                </p>
+                <ul>
+                    <li>Попробуйте другие диапазоны размеров (--target-size-min/max)</li>
+                    <li>Включите обратное сканирование (--reverse)</li>
+                    <li>Отключите сканирование метаданных (--skip-metadata)</li>
+                    <li>Проверьте корректность образа диска</li>
+                </ul>
+            </div>
+        </div>
+        
+
+        
+
+        <div class="footer">
+            <p><strong>Ultimate File Recovery v12.0</strong> | Готов к работе | На базе ИИ</p>
+            <p>Работает на Rust | SIMD Оптимизация | TUI Интерфейс</p>
+        </div>
+    </div>
+</body>
+
+</html>

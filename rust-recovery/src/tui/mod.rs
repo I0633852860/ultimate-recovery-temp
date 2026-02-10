@@ -14,7 +14,7 @@ pub mod widgets;
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
@@ -96,8 +96,9 @@ pub struct DiskHeatmap {
 
 impl DiskHeatmap {
     /// Create new disk heatmap
-    pub fn new(total_size: u64, image_path: String, output_dir: String) -> Self {
-        let width = 50;
+    pub fn new(_total_size: u64, image_path: String, output_dir: String) -> Self {
+        // Initial default size, will be resized on first draw
+        let width = 100;
         let height = 4;
         let total_blocks = width * height;
         
@@ -109,6 +110,30 @@ impl DiskHeatmap {
             image_path,
             output_dir,
         }
+    }
+
+    /// Resize heatmap
+    pub fn resize(&mut self, width: usize, height: usize) {
+        if width == self.width && height == self.height {
+            return;
+        }
+
+        let new_total = width * height;
+        let new_blocks = vec![0; new_total];
+        
+        // Simple resampling - mostly preserving "hot" status
+        // This is a naive implementation, but sufficient for TUI visualization
+        // To do it properly we'd need to re-map based on original scan data ranges, 
+        // but since we only store block states, we'll just clear and let it fill up again
+        // or attempt to map old to new. 
+        // For now: clear and let it refill (simpler, but loses history if resized)
+        // Ideally: keep a list of "scanned ranges" and "hot ranges" in TuiApp and re-render heatmap from that.
+        // Given constraints, we'll just keep it simple: resize resets visualization, but current position will refill scanned part.
+        
+        self.width = width;
+        self.height = height;
+        self.total_blocks = new_total;
+        self.blocks = new_blocks;
     }
 
     /// Update scan position and mark blocks as scanned
@@ -385,45 +410,48 @@ impl TuiApplication {
                 .direction(ratatui::layout::Direction::Vertical)
                 .constraints([
                     ratatui::layout::Constraint::Length(3),  // Header
-                    ratatui::layout::Constraint::Length(3), // Progress
-                    ratatui::layout::Constraint::Length(3), // Logs
+                    ratatui::layout::Constraint::Min(5),     // Heatmap (dynamic height)
+                    ratatui::layout::Constraint::Length(8),  // Stats & Progress
+                    ratatui::layout::Constraint::Length(10), // Logs
                     ratatui::layout::Constraint::Length(3),  // Footer
                 ].as_ref())
                 .split(f.size());
 
-            // Simple header
-            let header = ratatui::widgets::Paragraph::new("Ultimate Recovery v12.0 - TUI Active")
-                .style(ratatui::style::Style::default().fg(ratatui::style::Color::White))
-                .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL));
-            f.render_widget(header, chunks[0]);
+            // Header
+            f.render_widget(crate::tui::widgets::create_dashboard_header(&self.app), chunks[0]);
 
-            // Simple progress indicator
-            let progress = if self.app.total_size > 0 {
-                (self.app.bytes_scanned as f64 / self.app.total_size as f64) * 100.0
-            } else {
-                0.0
-            };
-            let progress_text = format!("Progress: {:.1}% | Files: {} | Fragments: {}", 
-                progress, self.app.recovered_files, self.app.fragments_found);
-            let stats = ratatui::widgets::Paragraph::new(progress_text)
-                .style(ratatui::style::Style::default().fg(ratatui::style::Color::Green));
-            f.render_widget(stats, chunks[1]);
+            // Footer
+            f.render_widget(crate::tui::widgets::DashboardFooter::render(), chunks[4]);
 
-            // Simple logs
-            let log_text = if !self.app.activity_log.is_empty() {
-                self.app.activity_log.last().unwrap().message.clone()
-            } else {
-                "Ready to scan...".to_string()
-            };
-            let logs = ratatui::widgets::Paragraph::new(log_text)
-                .style(ratatui::style::Style::default().fg(ratatui::style::Color::Gray));
-            f.render_widget(logs, chunks[2]);
+            // Logs
+            f.render_widget(crate::tui::widgets::LogsWidget::render(&self.app.activity_log), chunks[3]);
 
-            // Simple footer
-            let footer = ratatui::widgets::Paragraph::new("Controls: [P]ause [Q]uit")
-                .style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow))
-                .alignment(ratatui::layout::Alignment::Center);
-            f.render_widget(footer, chunks[3]);
+            // Dynamic Heatmap
+            let heatmap_area = chunks[1];
+            // Calculate available width for heatmap (minus borders/padding)
+            let available_width = (heatmap_area.width as usize).saturating_sub(2);
+            let available_height = (heatmap_area.height as usize).saturating_sub(2);
+            
+            if available_width > 0 && available_height > 0 {
+                // Resize if dimensions changed
+                if self.app.disk_heatmap.width != available_width || self.app.disk_heatmap.height != available_height {
+                     self.app.disk_heatmap.resize(available_width, available_height);
+                     // Refill scanned portion
+                     self.app.disk_heatmap.update_position(self.app.current_position, self.app.total_size);
+                }
+            }
+
+            f.render_widget(crate::tui::widgets::DiskHeatmapWidget::render(&self.app.disk_heatmap), chunks[1]);
+            
+            // Progress details (moved to stats area or separate line if needed)
+            // For now, let's put detailed stats in chunk 2
+
+
+            // Stats in chunk 2
+            f.render_widget(crate::tui::widgets::StatsWidget::render(&self.app), chunks[2]);
+
+            // Logs in chunk 3 (footer space, or create new chunk)
+            // Let's adjust layout to 4 distinct sections
         })?;
 
         Ok(())

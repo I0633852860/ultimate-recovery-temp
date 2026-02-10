@@ -4,10 +4,9 @@
 //! using askama templates. The reports include scan statistics, recovered files,
 //! data clusters, and comprehensive analysis results.
 
-pub mod templates;
+// pub mod templates;
 
-// use askama::Template; // Temporarily disabled
-use chrono::{DateTime, Local};
+use askama::Template;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::fs;
@@ -151,17 +150,17 @@ pub struct RecoveryStats {
     pub total_bytes_recovered: u64,
     /// Recovery efficiency score
     pub efficiency_score: f64,
+    /// Candidates rejected (found but not recovered)
+    pub candidates_rejected: u32,
 }
 
-/// HTML report template using askama (temporarily disabled)
- /*
+/// HTML report template using askama
 #[derive(Template)]
 #[template(path = "report.html", escape = "html")]
 pub struct HtmlReportTemplate {
     pub context: ReportContext,
     pub stats: RecoveryStats,
 }
-*/
 
 /// JSON report structure for machine-readable output
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,7 +209,7 @@ impl ProfessionalReportGenerator {
         let success = !recovered_files.is_empty();
         
         // Calculate recovery statistics
-        let stats = self.calculate_recovery_stats(&recovered_files);
+        let stats = self.calculate_recovery_stats(&recovered_files, scan_results.candidates_found);
         
         // Create report context
         let context = ReportContext {
@@ -240,27 +239,20 @@ impl ProfessionalReportGenerator {
         })
     }
 
-    /// Generate HTML report using askama template (temporarily disabled)
+    /// Generate HTML report using askama template
     fn generate_html_report(
         &self,
         context: &ReportContext,
-        _stats: &RecoveryStats,
+        stats: &RecoveryStats,
         path: &Path,
     ) -> Result<(), ReportError> {
-        // Temporary simple HTML generation without askama
-        let html_content = format!(
-            r#"<!DOCTYPE html>
-<html>
-<head><title>Recovery Report</title></head>
-<body>
-<h1>Recovery Report</h1>
-<p>Files recovered: {}</p>
-<p>Scan time: {:.1}s</p>
-</body>
-</html>"#,
-            context.recovered_files.len(),
-            context.scan_results.scan_time_sec
-        );
+        let template = HtmlReportTemplate {
+            context: context.clone(),
+            stats: stats.clone(),
+        };
+
+        let html_content = template.render()
+            .map_err(|e| ReportError::TemplateError(e.to_string()))?;
 
         fs::write(path, html_content)
             .map_err(|e| ReportError::IoError(e))?;
@@ -296,7 +288,7 @@ impl ProfessionalReportGenerator {
     }
 
     /// Calculate recovery statistics
-    fn calculate_recovery_stats(&self, recovered_files: &[RecoveredFile]) -> RecoveryStats {
+    fn calculate_recovery_stats(&self, recovered_files: &[RecoveredFile], candidates_found: u32) -> RecoveryStats {
         let total_processed = recovered_files.len() as u32;
         let successful_recoveries = recovered_files
             .iter()
@@ -321,6 +313,8 @@ impl ProfessionalReportGenerator {
             0.0
         };
 
+        let candidates_rejected = candidates_found.saturating_sub(total_processed);
+
         RecoveryStats {
             total_processed,
             successful_recoveries,
@@ -328,6 +322,7 @@ impl ProfessionalReportGenerator {
             success_rate,
             total_bytes_recovered,
             efficiency_score,
+            candidates_rejected,
         }
     }
 

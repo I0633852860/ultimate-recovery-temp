@@ -1,0 +1,62 @@
+{
+  "metadata": {
+    "timestamp": "2026-02-10 14:14:59",
+    "version": "12.0",
+    "tool_name": "Ultimate File Recovery",
+    "image_path": "test_optimization.img",
+    "output_dir": "output_opt"
+  },
+  "scan_results": {
+    "image_size_mb": 1.0,
+    "bytes_scanned_mb": 1.0,
+    "candidates_found": 1,
+    "files_recovered": 1,
+    "scan_time_sec": 0.423779772,
+    "avg_speed_mbps": 2.359716215997209,
+    "max_speed_mbps": 2.359716215997209,
+    "min_speed_mbps": 2.359716215997209,
+    "reverse_scan": false,
+    "exfat_enabled": false,
+    "nvme_optimization": false
+  },
+  "clusters": [
+    {
+      "id": 1,
+      "start_offset_hex": "0x0",
+      "end_offset_hex": "0x100000",
+      "size_bytes": 1048576,
+      "size_kb": 1024,
+      "link_count": 1,
+      "density": 0.0,
+      "confidence": 20.1200008392334,
+      "links": []
+    }
+  ],
+  "recovered_files": [
+    {
+      "id": 1,
+      "filename": "recovered_0001_Title Secret Plan.txt",
+      "file_type": "txt",
+      "confidence": 40.2400016784668,
+      "links": [],
+      "size_kb": 39,
+      "sha256": "aa9f3519e0f5cfe505c0ee678b5898a027d224e8cc13b4ccf369f429004f943b",
+      "start_offset": 0,
+      "end_offset": 1048576,
+      "validation_status": "Valid",
+      "recovery_time": "2026-02-10 14:14:59"
+    }
+  ],
+  "failure_reasons": [],
+  "stats": {
+    "total_processed": 1,
+    "successful_recoveries": 1,
+    "failed_recoveries": 0,
+    "success_rate": 100.0,
+    "total_bytes_recovered": 39936,
+    "efficiency_score": 70.0000111579895,
+    "candidates_rejected": 0
+  },
+  "success": true,
+  "report_checksum": "24e4e88ea393686a60862413af32e8a56c5f6fe8b0ab67bfb4731ebd0bae89b6"
+}

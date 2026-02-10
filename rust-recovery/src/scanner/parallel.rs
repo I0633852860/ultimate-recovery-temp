@@ -1,10 +1,10 @@
 use crate::disk::DiskImage;
 use crate::error::Result;
-use crate::simd_search::{find_pattern_simd, scan_block_simd};
+use crate::simd_search::scan_block_simd;
 use crate::types::{
     EnrichedLink, HotFragment, ScanConfig, ScanProgress, ScanResult, Offset,
 };
-use crate::matcher::{EnhancedMatcher, calculate_fragment_score, validate_data_chunk};
+use crate::matcher::{EnhancedMatcher, calculate_fragment_score};
 use crate::entropy::{calculate_shannon_entropy, get_entropy_category};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -19,6 +19,7 @@ pub struct ChunkInfo {
 }
 
 /// Parallel file scanner with SIMD-accelerated pattern matching
+#[derive(Clone)]
 pub struct ParallelScanner {
     config: ScanConfig,
     enhanced_matcher: EnhancedMatcher,
@@ -36,6 +37,19 @@ impl ParallelScanner {
         let enhanced_matcher = EnhancedMatcher::new();
 
         Self { config, enhanced_matcher }
+    }
+
+    /// Public async scan method
+    pub async fn scan(&self, disk: &DiskImage, sender: Sender<ScanProgress>) -> Result<ScanResult> {
+        let scanner = self.clone();
+        let disk = disk.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            let start_offset = Offset::new(0);
+            scanner.scan_streaming(&disk, start_offset, scanner.config.reverse, Some(sender))
+        })
+        .await
+        .map_err(|e| crate::error::RecoveryError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
     }
 
     pub fn with_matcher(config: ScanConfig, matcher: EnhancedMatcher) -> Self {
@@ -74,7 +88,7 @@ impl ParallelScanner {
             chunks.reverse();
         }
 
-        let total_chunks = chunks.len();
+        let _total_chunks = chunks.len();
         let config = &self.config;
         let sender_clone = sender;
         let matcher = &self.enhanced_matcher;
@@ -83,7 +97,7 @@ impl ParallelScanner {
         let all_links: Vec<Vec<EnrichedLink>> = chunks
             .par_iter()
             .enumerate()
-            .filter_map(|(i, chunk_info)| {
+            .filter_map(|(_i, chunk_info)| {
                 let chunk_start = chunk_info.offset as usize;
                 let chunk_end = chunk_start + chunk_info.size;
                 let chunk_data = &data[chunk_start..chunk_end];

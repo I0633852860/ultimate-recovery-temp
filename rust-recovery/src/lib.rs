@@ -24,6 +24,7 @@ pub mod stream_solver;
 pub mod checkpoint;
 pub mod tui;
 pub mod report;
+pub mod recovery;
 
 // Re-export commonly used types
 pub use types::{Offset, Size, ClusterId};
