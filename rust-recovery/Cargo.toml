@@ -38,3 +38,8 @@ askama = "0.12"
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
+
+# Low-level optimizations
+cache-padded = "1.2"
+aligned_box = "0.3"
+libc = "0.2"

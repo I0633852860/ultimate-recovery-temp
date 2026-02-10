@@ -1,14 +1,16 @@
 use crate::disk::DiskImage;
 use crate::error::Result;
-use crate::simd_search::scan_block_simd;
+use crate::numa::{NumaTopology, pin_thread_to_cpu};
+use crate::types_aligned::{HotFragmentAligned, ScanStatsAligned};
+use crate::simd_block_scanner_asm::{scan_block_avx2_asm, AlignedBlock};
 use crate::types::{
     EnrichedLink, HotFragment, ScanConfig, ScanProgress, ScanResult, Offset,
 };
 use crate::matcher::{EnhancedMatcher, calculate_fragment_score};
-use crate::entropy::{calculate_shannon_entropy, get_entropy_category};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::time::Instant;
+use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use tokio::sync::mpsc::Sender;
 
 /// Information about a chunk to be scanned
@@ -25,10 +27,76 @@ pub struct ParallelScanner {
     enhanced_matcher: EnhancedMatcher,
 }
 
+/// Адаптивный prefetch на основе паттернов доступа
+#[derive(Debug, Clone)]
+pub struct AdaptivePrefetcher {
+    last_access: usize,
+    stride: usize,
+    confidence: f32,
+}
+
+impl AdaptivePrefetcher {
+    pub fn new() -> Self {
+        Self {
+            last_access: 0,
+            stride: 64,
+            confidence: 0.0,
+        }
+    }
+    
+    pub fn record_access(&mut self, offset: usize) {
+        let current_stride = offset.saturating_sub(self.last_access);
+        
+        if current_stride == self.stride {
+            // Паттерн подтвердился
+            self.confidence = (self.confidence + 0.1).min(1.0);
+        } else {
+            // Паттерн изменился
+            self.stride = current_stride;
+            self.confidence = 0.0;
+        }
+        
+        self.last_access = offset;
+    }
+    
+    pub unsafe fn prefetch_next(&self, current_ptr: *const u8) {
+        if self.confidence > 0.5 {
+            let next_ptr = current_ptr.add(self.stride);
+            _mm_prefetch(next_ptr as *const i8, _MM_HINT_T0);
+        }
+    }
+}
+
 impl ParallelScanner {
     pub fn new(config: ScanConfig) -> Self {
-        // Configure global thread pool if requested
-        if config.num_threads > 0 {
+        // Detect NUMA topology
+        let numa_topology = NumaTopology::detect();
+
+        if let Some(ref topo) = numa_topology {
+            // Configure NUMA-aware thread pool
+            let thread_count = if config.num_threads > 0 {
+                config.num_threads
+            } else {
+                topo.total_cores
+            };
+
+            let _ = rayon::ThreadPoolBuilder::new()
+                .num_threads(thread_count)
+                .start_handler(move |thread_id| {
+                    if let Some(ref topo) = NumaTopology::detect() {
+                        // Pin thread to CPU core
+                        let cpu = topo.nodes
+                            .iter()
+                            .flat_map(|n| &n.cpu_cores)
+                            .nth(thread_id)
+                            .copied()
+                            .unwrap_or(thread_id);
+                        
+                        let _ = pin_thread_to_cpu(cpu);
+                    }
+                })
+                .build_global();
+        } else if config.num_threads > 0 {
             let _ = rayon::ThreadPoolBuilder::new()
                 .num_threads(config.num_threads)
                 .build_global();
@@ -82,25 +150,45 @@ impl ParallelScanner {
         let mmap = disk.get_mmap();
         let data = &mmap[start_offset as usize..];
 
-        // Create chunks
-        let mut chunks = self.create_chunks(data, start_offset);
+        let numa_topology = NumaTopology::detect();
+        let mut chunks = Vec::new();
+        
+        if let Some(ref topo) = numa_topology {
+            // NUMA-aware distribution
+            let base_chunks = self.create_chunks(data, start_offset);
+            let distribution = topo.distribute_chunks(base_chunks.len());
+            
+            for (_node_id, chunk_ids) in distribution {
+                for id in chunk_ids {
+                    if let Some(chunk) = base_chunks.get(id) {
+                        chunks.push(chunk.clone());
+                    }
+                }
+            }
+        } else {
+            chunks = self.create_chunks(data, start_offset);
+        }
+
         if reverse {
             chunks.reverse();
         }
 
+        let stats = ScanStatsAligned::new();
         let _total_chunks = chunks.len();
         let config = &self.config;
         let sender_clone = sender;
         let matcher = &self.enhanced_matcher;
 
-        // Parallel scan with panic isolation
+        // Parallel scan with panic isolation and stats tracking
         let all_links: Vec<Vec<EnrichedLink>> = chunks
             .par_iter()
             .enumerate()
             .filter_map(|(_i, chunk_info)| {
-                let chunk_start = chunk_info.offset as usize;
+                let chunk_start = (chunk_info.offset - start_offset) as usize;
                 let chunk_end = chunk_start + chunk_info.size;
                 let chunk_data = &data[chunk_start..chunk_end];
+
+                stats.add_chunk();
 
                 // Report progress
                 if let Some(ref s) = sender_clone {
@@ -177,83 +265,81 @@ impl ParallelScanner {
         offset: u64,
         mut matcher: EnhancedMatcher,
     ) -> (Vec<EnrichedLink>, Option<HotFragment>) {
-        let mut links = Vec::new();
         let mut json_markers = 0;
         let mut cyrillic_count = 0;
+        let mut prefetcher = AdaptivePrefetcher::new();
 
         // Use enhanced matcher for YouTube links
-        links = matcher.scan_chunk(chunk_data, offset as usize, self.config.deduplicate);
+        let links: Vec<EnrichedLink> = matcher.scan_chunk(chunk_data, offset as usize, self.config.deduplicate);
         let youtube_count = links.len();
 
-        // Fast block scan for hot fragment detection
-        let block_size = 32;
-        let mut hot_mask_accum = 0u32;
-        let mut has_metadata = false;
+        // Optimized block scan with prefetching
+        let block_size = 64; // Use 64 bytes for cache line alignment
         let mut is_empty = true;
+        let mut has_metadata = false;
 
-        for i in (0..chunk_data.len()).step_by(block_size) {
-            let block_end = (i + block_size).min(chunk_data.len());
-            let block = &chunk_data[i..block_end];
+        let mut i = 0;
+        while i + block_size <= chunk_data.len() {
+            // Adaptive software prefetching
+            unsafe {
+                prefetcher.record_access(i);
+                prefetcher.prefetch_next(chunk_data.as_ptr().add(i));
+            }
 
-            if block.len() < 32 {
-                // Process partial block
-                for &b in block {
-                    if b != 0 {
+            // SIMD block scan (AVX2 ASM optimized)
+            unsafe {
+                let block_ptr = chunk_data.as_ptr().add(i) as *const AlignedBlock;
+                if is_x86_feature_detected!("avx2") {
+                    let res = scan_block_avx2_asm(&*block_ptr);
+                    if !res.is_empty {
                         is_empty = false;
                     }
-                    if b == b'{' || b == b'}' || b == b'[' || b == b']' {
-                        json_markers += 1;
+                    if res.has_metadata {
+                        has_metadata = true;
                     }
-                    if b >= 0xD0 && b <= 0xDF {
-                        cyrillic_count += 1;
+                    
+                    if res.hot_mask_low != 0 || res.hot_mask_high != 0 {
+                        json_markers += (res.hot_mask_low.count_ones() + res.hot_mask_high.count_ones()) as usize;
                     }
                 }
-            } else {
-                let res = scan_block_simd(block);
-                if !res.is_empty {
-                    is_empty = false;
-                }
-                if res.has_metadata {
-                    has_metadata = true;
-                }
-                hot_mask_accum |= res.hot_mask;
-
-                // Count JSON markers in this block
-                json_markers += block
-                    .iter()
-                    .filter(|&&b| b == b'{' || b == b'}' || b == b'[' || b == b']')
-                    .count();
             }
+
+            i += block_size;
         }
 
-        // Calculate cyrillic density
-        let cyrillic_density = if chunk_data.is_empty() {
-            0.0
-        } else {
-            cyrillic_count as f32 / chunk_data.len() as f32
-        };
+        // Processing remainder
+        for &b in &chunk_data[i..] {
+            if b != 0 { is_empty = false; }
+            if b == b'{' || b == b'}' || b == b'[' || b == b']' { json_markers += 1; }
+            if b >= 0xD0 && b <= 0xDF { cyrillic_count += 1; }
+        }
 
-        // Calculate target score using new enhanced scoring
+        let cyrillic_density = if chunk_data.is_empty() { 0.0 } else { cyrillic_count as f32 / chunk_data.len() as f32 };
         let fragment_score = calculate_fragment_score(chunk_data, youtube_count, cyrillic_density, json_markers);
         let target_score = fragment_score.overall_score;
 
-        // Calculate entropy for the chunk
-        let entropy = calculate_shannon_entropy(chunk_data);
-        let entropy_category = get_entropy_category(chunk_data);
-
-        // Create hot fragment if promising
+        // Create hot fragment if promising using Aligned version internally
         let hot_fragment = if target_score > 20.0 && !is_empty {
             let file_type = self.guess_file_type_fast(chunk_data);
-
-            let mut fragment = HotFragment::new(offset, chunk_data.len());
-            fragment.youtube_count = youtube_count;
-            fragment.cyrillic_density = cyrillic_density;
-            fragment.json_markers = json_markers;
-            fragment.has_valid_json = fragment_score.is_valid_json;
-            fragment.target_score = target_score;
+            let mut aligned = HotFragmentAligned::new(offset, chunk_data.len() as u64);
+            
+            aligned.youtube_count = youtube_count as u32;
+            aligned.cyrillic_density = cyrillic_density;
+            aligned.json_markers = json_markers as u32;
+            aligned.has_valid_json = fragment_score.is_valid_json;
+            aligned.target_score = target_score;
+            aligned.entropy = crate::entropy::calculate_shannon_entropy(chunk_data);
+            aligned.has_metadata = has_metadata;
+            
+            // Convert to standard HotFragment for compatibility with existing Result types
+            let mut fragment = HotFragment::new(aligned.offset, aligned.size as usize);
+            fragment.youtube_count = aligned.youtube_count as usize;
+            fragment.cyrillic_density = aligned.cyrillic_density;
+            fragment.json_markers = aligned.json_markers as usize;
+            fragment.has_valid_json = aligned.has_valid_json;
+            fragment.target_score = aligned.target_score;
             fragment.file_type_guess = file_type;
-            fragment.entropy = entropy;
-            fragment.entropy_category = entropy_category.to_string();
+            fragment.entropy = aligned.entropy;
             fragment.fragment_score = fragment_score;
 
             Some(fragment)

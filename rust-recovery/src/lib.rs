@@ -25,6 +25,10 @@ pub mod checkpoint;
 pub mod tui;
 pub mod report;
 pub mod recovery;
+pub mod simd_search_asm;
+pub mod simd_block_scanner_asm;
+pub mod types_aligned;
+pub mod numa;
 
 // Re-export commonly used types
 pub use types::{Offset, Size, ClusterId};
@@ -34,6 +38,10 @@ pub use types::{StreamFragment, StreamScoringWeights, AssembledStream};
 pub use disk::{DiskImage, FragmentSlice};
 pub use scanner::{ParallelScanner, ChunkInfo};
 pub use simd_search::{find_pattern_simd, count_pattern_simd, scan_block_simd, BlockScanResult};
+pub use simd_search_asm::find_pattern_avx2_asm;
+pub use simd_block_scanner_asm::{scan_block_avx2_asm, AlignedBlock, BlockScanResultExt};
+pub use types_aligned::{HotFragmentAligned, ScanStatsAligned, AlignedBuffer};
+pub use numa::{NumaTopology, pin_thread_to_cpu};
 pub use matcher::{EnhancedMatcher, calculate_fragment_score, validate_data_chunk};
 pub use matcher::{detect_cyrillic, cyrillic_density, count_json_markers_fast, calculate_link_density};
 pub use entropy::{calculate_shannon_entropy, is_compressed_like, is_structured_text, get_entropy_category};

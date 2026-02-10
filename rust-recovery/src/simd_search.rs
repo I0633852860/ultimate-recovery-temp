@@ -5,6 +5,8 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use crate::simd_block_scanner_asm::AlignedBlock;
+
 /// Results of a 32-byte block scan
 #[derive(Debug, Clone, Copy)]
 pub struct BlockScanResult {
@@ -30,8 +32,8 @@ pub fn find_pattern_simd(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
-            // Safety: We checked for AVX2 support via runtime detection (is_x86_feature_detected).
-            return unsafe { find_pattern_avx2(haystack, needle) };
+            // Safety: We checked for AVX2 support. Using manual ASM for extra speed.
+            return unsafe { crate::simd_search_asm::find_pattern_avx2_asm(haystack, needle) };
         } else if is_x86_feature_detected!("sse4.2") {
             // Safety: We checked for SSE4.2 support via runtime detection.
             return unsafe { find_pattern_sse42(haystack, needle) };
@@ -159,7 +161,17 @@ pub fn scan_block_simd(block: &[u8]) -> BlockScanResult {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
-            return unsafe { fast_scan_block_avx2(block) };
+            unsafe {
+                let mut aligned_block = AlignedBlock { data: [0u8; 64] };
+                let len = block.len().min(64);
+                aligned_block.data[..len].copy_from_slice(&block[..len]);
+                let res = crate::simd_block_scanner_asm::scan_block_avx2_asm(&aligned_block);
+                return BlockScanResult {
+                    is_empty: res.is_empty,
+                    has_metadata: res.has_metadata,
+                    hot_mask: res.hot_mask_low, // Using low mask for compat
+                };
+            }
         }
     }
 
